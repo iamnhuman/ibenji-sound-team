@@ -25,6 +25,7 @@
   const gifSize = document.getElementById('gif-size');
   const gifSlide = document.getElementById('gif-slide');
   const exportStatus = document.getElementById('export-status');
+  const browserSave = document.getElementById('browser-save');
   const filmstrip = document.getElementById('filmstrip');
   const filmPrev = document.getElementById('film-prev');
   const filmNext = document.getElementById('film-next');
@@ -32,9 +33,22 @@
   const visibleCount = Math.min(4, thumbnails.length);
   const lastWindow = thumbnails.length - visibleCount;
   const gridButtons = [...resolutionOptions.querySelectorAll('button')];
-  let grid = Number(gridButtons.find(button => button.getAttribute('aria-pressed') === 'true').dataset.size);
-  let playing = true;
-  let playhead = startFromHash();
+  const launch = new URLSearchParams(location.search);
+  const launchExport = launch.get('export');
+  const exportLink = ['png', 'gif-current', 'gif-full'].includes(launchExport);
+  const launchTime = launch.has('at') ? Number(launch.get('at')) : NaN;
+  const telegramOrigin = 'https://web.telegram.org';
+  const telegramPlatform = new URLSearchParams(location.hash.slice(1)).get('tgWebAppPlatform');
+  const telegramFrame = window.parent !== window &&
+    (document.referrer.startsWith(telegramOrigin + '/') || telegramPlatform?.startsWith('web'));
+  const inTelegram = Boolean(window.Telegram?.WebApp?.initData || window.TelegramWebviewProxy?.postEvent ||
+    telegramFrame || telegramPlatform || /\bTelegram\b/i.test(navigator.userAgent));
+  const initialGrid = gridButtons.find(button => exportLink && button.dataset.size === launch.get('px'))
+    ?? gridButtons.find(button => button.getAttribute('aria-pressed') === 'true');
+  for (const button of gridButtons) button.setAttribute('aria-pressed', String(button === initialGrid));
+  let grid = Number(initialGrid.dataset.size);
+  let playing = !exportLink;
+  let playhead = exportLink && launchTime >= 0 && launchTime < duration ? launchTime : startFromHash();
   let active = -1;
   let animationFrame = 0;
   let previousTimestamp = null;
@@ -44,6 +58,7 @@
   let cellSize;
   let imageData;
   let currentFrame;
+  let paintedAt = playhead;
   let wheelTravel = 0;
   let lastWheelTime = -Infinity;
   let firstVisible = 0;
@@ -120,6 +135,7 @@
   function paint() {
     const { frame, index, progress } = frameAt(playhead, grid);
     currentFrame = frame;
+    paintedAt = playhead;
     const gridChanged = imageData?.width !== frame.size;
     if (gridChanged) {
       artwork.width = frame.size;
@@ -272,18 +288,19 @@
     resolution.setAttribute('aria-label', `Разрешение ${grid} на ${grid} пикселей`);
     resolutionValue.textContent = `${grid} PX`;
     drawControlLabels([resolutionValue]);
+    if (!browserSave.hidden) browserSave.textContent = `Скачать ${launchExport === 'png' ? 'PNG' : 'GIF'} · ${size}`;
   }
 
-  function showResolutionMenu(open, returnFocus = false) {
+  function showResolutionMenu(open, focus = false) {
     resolutionOptions.hidden = !open;
     resolution.setAttribute('aria-expanded', String(open));
     if (open) {
       showGifMenu(false);
-      gridButtons.find(button => Number(button.dataset.size) === grid).focus();
-    } else if (returnFocus) resolution.focus();
+      if (focus) gridButtons.find(button => Number(button.dataset.size) === grid).focus({ preventScroll: true });
+    } else if (focus) resolution.focus({ preventScroll: true });
   }
 
-  function showGifMenu(open, returnFocus = false) {
+  function showGifMenu(open, focus = false) {
     gifOptions.hidden = !open;
     gif.setAttribute('aria-expanded', String(open));
     if (open) {
@@ -292,8 +309,8 @@
       const { number } = clips[gifClip];
       gifSlide.textContent = `Слайд №${number}`;
       gifCurrent.setAttribute('aria-label', `Current slide. Скачать логотип №${number}`);
-      if (!gifFull.disabled) gifFull.focus();
-    } else if (returnFocus) gif.focus();
+      if (focus && !gifFull.disabled) gifFull.focus({ preventScroll: true });
+    } else if (focus) gif.focus({ preventScroll: true });
   }
 
   function saveFile(bytes, type, filename) {
@@ -308,14 +325,43 @@
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
 
+  function openBrowserExport(format, index, time) {
+    const url = new URL(location.href);
+    url.search = new URLSearchParams({ export: format, px: grid, at: time });
+    url.hash = clips[index].scene.id;
+    const eventType = 'web_app_open_link';
+    const eventData = { url: url.href };
+    try {
+      if (window.Telegram?.WebApp?.openLink) window.Telegram.WebApp.openLink(url.href);
+      else if (window.TelegramWebviewProxy?.postEvent) window.TelegramWebviewProxy.postEvent(eventType, JSON.stringify(eventData));
+      else if (telegramFrame) window.parent.postMessage(JSON.stringify({ eventType, eventData }), telegramOrigin);
+      else if (window.external?.notify) window.external.notify(JSON.stringify({ eventType, eventData }));
+      else window.open(url.href, '_blank', 'noopener,noreferrer');
+    } catch {
+      window.open(url.href, '_blank', 'noopener,noreferrer');
+    }
+  }
+
   function downloadFrame() {
+    if (inTelegram) {
+      openBrowserExport('png', active, paintedAt);
+      return;
+    }
     const size = grid;
     saveFile(encodePng(currentFrame, size), 'image/png', `ibenji-${clips[active].number}-${size}x${size}.png`);
+    browserSave.hidden = true;
   }
 
   async function downloadAnimation(clipIndex) {
     if (gifFull.disabled) return;
+    if (inTelegram) {
+      openBrowserExport(clipIndex === undefined ? 'gif-full' : 'gif-current', clipIndex ?? active,
+        clipIndex === undefined ? paintedAt : clips[clipIndex].start);
+      showGifMenu(false, true);
+      return;
+    }
     const size = grid;
+    browserSave.hidden = true;
     gifFull.disabled = true;
     gifCurrent.disabled = true;
     gif.dataset.exporting = 'true';
@@ -386,17 +432,27 @@
     stepClip(event.key === 'ArrowRight' ? 1 : -1);
   });
   download.addEventListener('click', downloadFrame);
-  resolution.addEventListener('click', () => showResolutionMenu(resolutionOptions.hidden, true));
-  gif.addEventListener('click', () => showGifMenu(gifOptions.hidden, true));
+  resolution.addEventListener('click', event => showResolutionMenu(resolutionOptions.hidden, event.detail === 0));
+  gif.addEventListener('click', event => showGifMenu(gifOptions.hidden, event.detail === 0));
   gifFull.addEventListener('click', () => downloadAnimation());
   gifCurrent.addEventListener('click', () => downloadAnimation(gifClip));
-  document.addEventListener('pointerdown', event => {
-    if (!gifOptions.hidden && !gifControl.contains(event.target)) showGifMenu(false);
-    if (!resolutionOptions.hidden && !resolutionControl.contains(event.target)) showResolutionMenu(false);
+  browserSave.addEventListener('click', () => {
+    if (launchExport === 'png') {
+      downloadFrame();
+      download.focus({ preventScroll: true });
+    } else {
+      showGifMenu(true);
+      downloadAnimation(launchExport === 'gif-current' ? gifClip : undefined);
+      gif.focus({ preventScroll: true });
+    }
   });
-  resolutionControl.addEventListener('focusout', event => {
-    if (!resolutionOptions.hidden && !resolutionControl.contains(event.relatedTarget)) showResolutionMenu(false);
-  });
+  function dismissMenusOutside({ target }) {
+    if (!gifOptions.hidden && !gifControl.contains(target)) showGifMenu(false);
+    if (!resolutionOptions.hidden && !resolutionControl.contains(target)) showResolutionMenu(false);
+  }
+  document.addEventListener('pointerdown', dismissMenusOutside);
+  // Some WebViews blur a button on tap without giving the next button focus.
+  document.addEventListener('focusin', dismissMenusOutside);
   resolutionControl.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !resolutionOptions.hidden) {
       event.preventDefault();
@@ -406,11 +462,11 @@
     const direction = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
     if (!direction) return;
     event.preventDefault();
-    if (resolutionOptions.hidden) showResolutionMenu(true);
+    if (resolutionOptions.hidden) showResolutionMenu(true, true);
     else {
       const index = gridButtons.indexOf(document.activeElement);
       const next = (index + direction + gridButtons.length) % gridButtons.length;
-      gridButtons[next].focus();
+      gridButtons[next].focus({ preventScroll: true });
     }
   });
   gifControl.addEventListener('keydown', event => {
@@ -429,9 +485,11 @@
 
   drawControlLabels();
   showFilmstrip(0);
+  browserSave.hidden = !exportLink || inTelegram;
   updateExportSize();
   new ResizeObserver(fitArtwork).observe(stage);
   window.addEventListener('resize', fitArtwork);
   paint();
   syncPlayback();
+  if (!browserSave.hidden) browserSave.focus({ preventScroll: true });
 })();

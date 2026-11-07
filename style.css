@@ -283,6 +283,20 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--ink, #f6f4fa); 
 
 .export-size { color: var(--muted); }
 
+.controls .browser-save {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  max-width: 100%;
+  height: auto;
+  min-height: 40px;
+  padding: 8px 12px;
+  color: var(--ink);
+  background: var(--case);
+  font-size: 12px;
+  text-align: center;
+}
+
 @media (max-height: 610px) {
   .wordmark canvas { width: 64px; height: 62px; }
 }
