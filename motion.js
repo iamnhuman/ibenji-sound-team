@@ -24,7 +24,7 @@
     console: [.5, .44], 'foot-stamp': [.51, .4], 'stream-disc': [.5, .34],
     'violet-player': [.54, .39], carnival: [.51, .38], 'prancing-horse': [.5, .35],
     crocodile: [.53, .38], 'chroma-note': [.50, .34], 'golden-harp': [.5, .32], 'mecha-ouroboros': [.5, .51],
-    'ring-mark': [.50, .38], 'red-roof': [.50, .37], 'winged-shoe': [.55, .34], 'flame-type': [.5, .44],
+    'ring-mark': [.50, .38], 'red-roof': [.50, .37], 'winged-shoe': [.55, .34],
     'green-eye': [.47, .36], umbrella: [.506, .35], 'flame-crest': [.5, .49]
   };
   const clips = pixelArt.scenes.map((scene, index) => ({

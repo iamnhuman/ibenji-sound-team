@@ -15,11 +15,11 @@ assert.deepEqual(clips.map(({ scene }) => scene.id), [
   'broken-computer', 'cyber-hand', 'pocket-pet', 'hazard', 'candy', 'chrome', 'slime',
   'space-emblem', 'red-bulls', 'red-vector', 'metal-mark',
   'console', 'foot-stamp', 'stream-disc', 'violet-player', 'carnival', 'prancing-horse', 'crocodile', 'chroma-note', 'golden-harp', 'mecha-ouroboros',
-  'ring-mark', 'red-roof', 'winged-shoe', 'flame-type', 'green-eye', 'umbrella', 'flame-crest'
+  'ring-mark', 'red-roof', 'winged-shoe', 'green-eye', 'umbrella', 'flame-crest'
 ]);
 assert.deepEqual(clips.map(clip => clip.number), Array.from({ length: clips.length }, (_, index) => index + 1));
 assert.deepEqual([...new Set(clips.map(clip => clip.cutStyle))], ['iris', 'beam', 'splice', 'cascade']);
-assert.equal(duration, 129);
+assert.equal(duration, 126);
 for (const scene of scenes) {
   assert(fs.existsSync(path.resolve(__dirname, '../img/done', scene.source)), 'A completed source must be in done');
   assert(!fs.existsSync(path.resolve(__dirname, '../img/todo', scene.source)), 'A completed source must leave todo');

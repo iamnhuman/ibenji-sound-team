@@ -932,11 +932,14 @@
 
   const marqueeBulbs = [[65, 179], [69, 157], [74, 135], [84, 111], [103, 87], [123, 72], [146, 59],
     [298, 80], [317, 103], [332, 124], [341, 153], [342, 186]];
+  const marqueeStars = [[61, 223, 15, .04], [72, 250, 19, .21], [204, 388, 16, .39],
+    [339, 250, 19, .57], [352, 226, 16, .73]];
   const laughKeys = [[0, 0], [.12, -.26], [.27, 1], [.38, -.37], [.51, .89], [.63, -.32],
     [.76, .79], [.91, .12], [1.04, -.20], [1.18, .38], [1.37, 0], [1.5, 0]];
 
   function animateMarquee(scene, frame, base, time, table) {
     const { size } = frame;
+    const cycle = time % 1.5;
     const white = frame.palette.indexOf('#ffffff');
     const yellow = frame.palette.indexOf(scene.accent);
     const amber = nearest(scene, [141, 97, 4]);
@@ -963,7 +966,21 @@
       }
     });
 
-    const [laugh] = pose(time % 1.5, laughKeys);
+    for (const [x, y, span, delay] of marqueeStars) {
+      const age = (cycle - delay) / .53;
+      if (age <= 0 || age >= 1) continue;
+      const pulse = Math.sin(age * Math.PI) ** 2;
+      const cx = x / 410, cy = y / 410, reach = span / 410;
+      patch(scene, frame, [cx - reach, cy - reach, 2 * reach, 2 * reach], (ink, u, v) => {
+        const [r, g, b] = table[ink].rgb;
+        if (r < 143 || g < 120 || r < b * 1.6 || g < b * 1.25) return ink;
+        const distance = Math.abs(u - cx) + Math.abs(v - cy);
+        const core = Math.max(.67 / size, reach * (.18 + pulse * .62));
+        return pulse > .47 && distance < core ? white : pulse > .21 ? yellow : ink;
+      });
+    }
+
+    const [laugh] = pose(cycle, laughKeys);
     patch(scene, frame, [.355, .382, .284, .152], (ink, u, v, x) => {
       const across = (u - .355) / .284;
       if (across <= 0 || across >= 1 || !laugh) return ink;
@@ -1130,36 +1147,77 @@
     }
   }
 
-  const harpStrings = [[177, 58, 171, 77], [187, 65, 179, 89], [197, 69, 184, 103],
-    [208, 72, 191, 121], [219, 76, 198, 140], [231, 77, 205, 159], [242, 80, 214, 166]];
+  const harpStrings = [[177.5, 57, 171.5, 77], [188.5, 65, 178, 92], [198.5, 68, 184.5, 108],
+    [208.5, 72, 190.5, 124], [219.5, 75, 197.5, 142], [231.5, 76, 205, 162], [242.5, 79, 215, 167]];
 
   function animateHarp(scene, frame, base, time, table) {
     const cycle = time % 1.5;
-    const { size } = frame;
+    const { size, pixels } = frame;
     const white = frame.palette.indexOf('#ffffff');
     const gold = frame.palette.indexOf(scene.accent);
-    for (const [index, [x0, y0, x1, y1]] of harpStrings.entries()) {
-      const age = (cycle - .05 - index * .078) / .47;
-      if (age < 0 || age > 1) continue;
+    const stringInk = ink => {
+      const [r, g, b] = table[ink].rgb;
+      return r > 90 && g > 60 && r > b * 1.65;
+    };
+    const strings = harpStrings.map(([x0, y0, x1, y1], index) => {
+      const age = (cycle - .04 - index * .074) / .57;
       const [sx, sy] = point(scene, size, x0 / 410, y0 / 410);
       const [ex, ey] = point(scene, size, x1 / 410, y1 / 410);
-      const swing = Math.sin(age * tau * 2.7) * (1 - age) ** 1.4 * size * .018;
-      const reach = Math.max(.54, size * .0070);
-      const string = [(x1 - 4) / 410, (y0 - 2) / 410, (x0 - x1 + 8) / 410, (y1 - y0 + 4) / 410];
-      layer(scene, frame, base, string, (x, y) => {
-        const fret = Math.max(0, Math.min(1, (y + .5 - sy) / (ey - sy)));
-        return [x - swing * Math.sin(Math.PI * fret), y];
-      }, {
-        select: (ink, x, y) => {
-          const fret = (y + .5 - sy) / (ey - sy);
-          const [r, g, b] = table[ink].rgb;
-          return fret >= 0 && fret <= 1 && r > 90 && g > 60 && r > b * 1.65 &&
-            Math.abs(x + .5 - (sx + (ex - sx) * fret)) <= reach;
-        }
+      const swing = age > 0 && age < 1
+        ? Math.sin(cycle * tau * 5.1 - index * .39) * Math.min(1, age * 9) * (1 - age) ** .68 * size * .024
+        : 0;
+      return { sx, sy, ex, ey, swing, age };
+    });
+
+    const margin = Math.max(.8, size * .014);
+    const [, top,, bottom] = bounds(scene, size, [0, 57 / 410, 1, 110 / 410]);
+    for (let y = top; y < bottom; y++) {
+      const knots = [];
+      for (const { sx, sy, ex, ey, swing } of strings) {
+        const fret = (y + .5 - sy) / (ey - sy);
+        if (fret < 0 || fret > 1) continue;
+        const anchor = Math.min(1, fret * 10, (1 - fret) * 10) ** .64;
+        knots.push([sx + (ex - sx) * fret, swing * anchor]);
+      }
+      if (!knots.some(([, shift]) => shift)) continue;
+      knots.unshift([knots[0][0] - margin, 0]);
+      knots.push([knots.at(-1)[0] + margin, 0]);
+
+      // Resample each row between neighboring strings so the spans move together.
+      const targets = knots.map(([x, shift], index) => {
+        if (!shift) return x;
+        const room = .46 * Math.min(x - knots[index - 1][0], knots[index + 1][0] - x);
+        return x + Math.max(-room, Math.min(room, shift));
       });
-      const fret = .20 + age * .68;
-      const x = sx + (ex - sx) * fret + swing * Math.sin(Math.PI * fret);
-      square(frame, x, sy + (ey - sy) * fret, 1, age < .36 ? white : gold);
+      const row = y * size;
+      for (let segment = 0; segment < targets.length - 1; segment++) {
+        const left = targets[segment], right = targets[segment + 1];
+        const from = knots[segment][0], to = knots[segment + 1][0];
+        for (let x = Math.ceil(left - .5); x < Math.ceil(right - .5); x++) {
+          const sx = from + (to - from) * (x + .5 - left) / (right - left);
+          pixels[row + x] = base[row + Math.floor(sx)];
+        }
+      }
+      for (let index = 1; index < knots.length - 1; index++) {
+        if (!knots[index][1]) continue;
+        const column = row + Math.floor(knots[index][0]);
+        const ink = [base[column], base[column - 1], base[column + 1]].find(stringInk);
+        if (ink !== undefined) pixels[row + Math.floor(targets[index])] = ink;
+      }
+    }
+
+    for (const { sx, sy, ex, ey, age } of strings) {
+      if (age <= 0 || age >= 1) continue;
+      const fret = .06 + age * .88;
+      const y = Math.floor(sy + (ey - sy) * fret);
+      const center = Math.floor(sx + (ex - sx) * fret);
+      for (const shift of [0, -1, 1, -2, 2]) {
+        const index = y * size + center + shift;
+        if (stringInk(pixels[index])) {
+          pixels[index] = age < .38 ? white : gold;
+          break;
+        }
+      }
     }
   }
 
@@ -1348,20 +1406,24 @@
     });
   }
 
-  function animateUmbrella(scene, frame, phase, table) {
-    const coral = frame.palette.indexOf('#ff6250');
-    const silver = frame.palette.indexOf('#c0bdb6');
-    const white = frame.palette.indexOf('#ffffff');
-    const [cx, cy] = point(scene, frame.size, .506, .313);
-    patch(scene, frame, [.267, .02, .475, .573], (ink, _u, _v, x, y) => {
+  const umbrellaKeys = [[0, 1, 0], [.17, .96, -.05], [.38, .55, -.34], [.48, .58, -.31],
+    [.69, .96, .045], [.82, .985, .036], [.99, 1, 0], [1.5, 1, 0]];
+
+  function animateUmbrella(scene, frame, base, time, table) {
+    const [spread, angle] = pose(time % 1.5, umbrellaKeys);
+    if (spread === 1 && !angle) return;
+    const { size } = frame;
+    const [cx, cy] = point(scene, size, .506, .313);
+    const turn = time < 1.5 ? angle : -angle;
+    const cos = Math.cos(turn), sin = Math.sin(turn);
+    const height = spread ** 1.19;
+    const [right, dots] = point(scene, size, .697, .557);
+    layer(scene, frame, base, [.266, .022, .482, .580], (x, y) => {
       const dx = x + .5 - cx, dy = y + .5 - cy;
-      const { rgb: [r, g, b], light } = table[ink];
-      if (Math.hypot(dx, dy) < frame.size * .046 || r < 104) return ink;
-      const red = r > g * 1.50 && r > b * 1.43;
-      const glow = Math.cos(Math.atan2(dy, dx) - phase * 2);
-      if (glow > .92) return red ? coral : light > 158 ? white : ink;
-      if (glow < -.62 && light > 180) return silver;
-      return ink;
+      return [cx + (dx * cos + dy * sin) / spread - .5, cy + (-dx * sin + dy * cos) / height - .5];
+    }, {
+      select: (ink, x, y) => table[ink].rgb[0] > 22 && (y + .5 < dots || x + .5 < right),
+      padding: .026
     });
   }
 
@@ -1395,6 +1457,34 @@
       const spread = 1 + .18 * extension / 13 * depth;
       return [center + (x + .5 - center - bend) / spread - .5, sy - .5];
     },{select:(ink,x,y)=>ink!==0&&insideOutline(outline,x+.5,y+.5),padding:.092});
+  }
+
+  const girlBlinkKeys = [[0, 1], [.42, 1], [.51, .10], [.56, .10], [.67, 1],
+    [2.08, 1], [2.20, .10], [2.26, .10], [2.40, 1], [3, 1]];
+  const girlEyes = [
+    { area: [125, 155, 64, 31], lid: [157, 164, -.14], outline: [[126, 168], [135, 163], [151, 158],
+      [169, 157], [181, 158], [188, 161], [186, 170], [180, 176], [171, 181], [151, 183], [138, 178], [129, 173]] },
+    { area: [241, 151, 70, 30], lid: [277, 159, .10], outline: [[243, 158], [252, 153], [267, 153],
+      [283, 154], [300, 156], [309, 160], [308, 169], [302, 175], [291, 179], [277, 178], [261, 173], [249, 168]] }
+  ];
+
+  function animateGirlBlink(scene, frame, base, time) {
+    const [open] = pose(time, girlBlinkKeys);
+    if (open === 1) return;
+    const { size } = frame;
+    const pink = frame.palette.indexOf(scene.accent);
+    for (const { area, lid: [cx, cy, slope], outline } of girlEyes) {
+      const shape = outline.map(([x, y]) => point(scene, size, x / 410, y / 410));
+      patch(scene, frame, area.map(value => value / 410), (ink, u, v, x, y) => {
+        if (!insideOutline(shape, x + .5, y + .5)) return ink;
+        const horizontal = u * 410 - cx;
+        const crease = (cy + horizontal * slope + 3.7 * Math.max(0, 1 - (horizontal / 33) ** 2)) / 410;
+        const gap = v - crease;
+        if (open < .20) return Math.abs(gap) < .60 / size ? 0 : pink;
+        const [, sourceY] = point(scene, size, u, crease + gap / open);
+        return insideOutline(shape, x + .5, sourceY) ? base[Math.floor(sourceY) * size + x] : pink;
+      });
+    }
   }
 
   function animateGirlSurround(scene, frame, time) {
@@ -1444,6 +1534,7 @@
     switch(scene.motion){
       case 'tongue':
         animateTongue(scene,frame,base,t);
+        animateGirlBlink(scene, frame, base, t);
         animateGirlSurround(scene, frame, t);
         break;
       case 'skull-snap':
@@ -1587,7 +1678,7 @@
         animateGreenEye(scene, frame, base, t, table);
         break;
       case 'umbrella':
-        animateUmbrella(scene, frame, phase, table);
+        animateUmbrella(scene, frame, base, t, table);
         break;
       case 'starfield': {
         const sky = nearest(scene, [19, 51, 227]);
