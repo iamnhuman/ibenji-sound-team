@@ -12,6 +12,10 @@
   const playback = document.getElementById('playback');
   const zoomOut = document.getElementById('zoom-out');
   const zoomIn = document.getElementById('zoom-in');
+  const resolutionControl = document.getElementById('resolution-control');
+  const resolution = document.getElementById('resolution');
+  const resolutionOptions = document.getElementById('resolution-options');
+  const resolutionValue = document.getElementById('resolution-value');
   const download = document.getElementById('download');
   const gif = document.getElementById('gif');
   const gifControl = document.getElementById('gif-control');
@@ -24,10 +28,10 @@
   const filmstrip = document.getElementById('filmstrip');
   const filmPrev = document.getElementById('film-prev');
   const filmNext = document.getElementById('film-next');
-  const thumbnails = clips.map(({ scene }) => createThumbnail(scene));
+  const thumbnails = clips.map(createThumbnail);
   const visibleCount = Math.min(4, thumbnails.length);
   const lastWindow = thumbnails.length - visibleCount;
-  const gridButtons = [...document.querySelectorAll('.resolutions button')];
+  const gridButtons = [...resolutionOptions.querySelectorAll('button')];
   let grid = Number(gridButtons.find(button => button.getAttribute('aria-pressed') === 'true').dataset.size);
   let playing = true;
   let playhead = startFromHash();
@@ -45,12 +49,12 @@
   let firstVisible = 0;
   let gifClip = 0;
 
-  function createThumbnail(scene) {
+  function createThumbnail({ scene, number }) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'frame-button';
     button.dataset.scene = scene.id;
-    button.setAttribute('aria-label', `${scene.number}. ${scene.title}`);
+    button.setAttribute('aria-label', `${number}. ${scene.title}`);
     const thumbnail = document.createElement('canvas');
     thumbnail.width = 46;
     thumbnail.height = 46;
@@ -59,7 +63,7 @@
     label.className = 'frame-number';
     label.dataset.pixelLabel = '';
     label.setAttribute('aria-hidden', 'true');
-    label.textContent = String(scene.number);
+    label.textContent = String(number);
     button.append(thumbnail, label);
     filmstrip.append(button);
     return button;
@@ -128,11 +132,11 @@
     else drawArtwork();
 
     if (index !== active) {
-      const { scene } = clips[index];
+      const { scene, number } = clips[index];
       thumbnails[active]?.removeAttribute('aria-current');
       thumbnails[index].setAttribute('aria-current', 'true');
       document.documentElement.style.setProperty('--accent', scene.accent ?? scene.palette[2] ?? scene.palette[1]);
-      canvas.setAttribute('aria-label', `Пиксельный логотип IBENJI №${scene.number}. ${scene.title}`);
+      canvas.setAttribute('aria-label', `Пиксельный логотип IBENJI №${number}. ${scene.title}`);
       active = index;
       const focused = document.activeElement;
       revealClip(index);
@@ -185,7 +189,7 @@
     if (focusThumbnail) thumbnails[next].focus();
   }
 
-  function drawControlLabels() {
+  function drawControlLabels(labels = document.querySelectorAll('[data-pixel-label]')) {
     const glyphs = {
       0: ['111', '101', '101', '101', '111'],
       1: ['010', '110', '010', '010', '111'],
@@ -214,7 +218,7 @@
       ' ': ['000', '000', '000', '000', '000']
     };
     const namespace = 'http://www.w3.org/2000/svg';
-    for (const label of document.querySelectorAll('[data-pixel-label]')) {
+    for (const label of labels) {
       const value = [...label.textContent.trim()];
       const width = value.length * 4 - 1;
       let squares = '';
@@ -245,14 +249,6 @@
 
   function zoomWithWheel(event) {
     if (event.ctrlKey || event.metaKey || !event.deltaY) return;
-    const { left, top, right, bottom, width, height } = canvas.getBoundingClientRect();
-    const marginX = width / 4;
-    const marginY = height / 4;
-    if (event.clientX < left - marginX || event.clientX > right + marginX ||
-        event.clientY < top - marginY || event.clientY > bottom + marginY) {
-      wheelTravel = 0;
-      return;
-    }
     event.preventDefault();
     const direction = Math.sign(event.deltaY);
     if (event.deltaMode !== 0) {
@@ -273,14 +269,27 @@
     download.title = `Скачать PNG ${size}`;
     download.setAttribute('aria-label', download.title);
     gifSize.textContent = size;
+    resolution.setAttribute('aria-label', `Разрешение ${grid} на ${grid} пикселей`);
+    resolutionValue.textContent = `${grid} PX`;
+    drawControlLabels([resolutionValue]);
+  }
+
+  function showResolutionMenu(open, returnFocus = false) {
+    resolutionOptions.hidden = !open;
+    resolution.setAttribute('aria-expanded', String(open));
+    if (open) {
+      showGifMenu(false);
+      gridButtons.find(button => Number(button.dataset.size) === grid).focus();
+    } else if (returnFocus) resolution.focus();
   }
 
   function showGifMenu(open, returnFocus = false) {
     gifOptions.hidden = !open;
     gif.setAttribute('aria-expanded', String(open));
     if (open) {
+      showResolutionMenu(false);
       gifClip = active;
-      const number = clips[gifClip].scene.number;
+      const { number } = clips[gifClip];
       gifSlide.textContent = `Слайд №${number}`;
       gifCurrent.setAttribute('aria-label', `Current slide. Скачать логотип №${number}`);
       if (!gifFull.disabled) gifFull.focus();
@@ -301,7 +310,7 @@
 
   function downloadFrame() {
     const size = grid;
-    saveFile(encodePng(currentFrame, size), 'image/png', `ibenji-${clips[active].scene.number}-${size}x${size}.png`);
+    saveFile(encodePng(currentFrame, size), 'image/png', `ibenji-${clips[active].number}-${size}x${size}.png`);
   }
 
   async function downloadAnimation(clipIndex) {
@@ -318,7 +327,7 @@
     setProgress(0);
     try {
       const bytes = await encodeGif(size, { clipIndex, onProgress: setProgress });
-      const target = clipIndex === undefined ? 'loop' : clips[clipIndex].scene.number;
+      const target = clipIndex === undefined ? 'loop' : clips[clipIndex].number;
       saveFile(bytes, 'image/gif', `ibenji-${target}-${size}x${size}.gif`);
       if (!gifOptions.hidden) showGifMenu(false, true);
       exportStatus.hidden = true;
@@ -354,6 +363,7 @@
       grid = Number(button.dataset.size);
       for (const option of gridButtons) option.setAttribute('aria-pressed', String(option === button));
       updateExportSize();
+      showResolutionMenu(false, true);
       paint();
     });
   }
@@ -376,11 +386,32 @@
     stepClip(event.key === 'ArrowRight' ? 1 : -1);
   });
   download.addEventListener('click', downloadFrame);
+  resolution.addEventListener('click', () => showResolutionMenu(resolutionOptions.hidden, true));
   gif.addEventListener('click', () => showGifMenu(gifOptions.hidden, true));
   gifFull.addEventListener('click', () => downloadAnimation());
   gifCurrent.addEventListener('click', () => downloadAnimation(gifClip));
   document.addEventListener('pointerdown', event => {
     if (!gifOptions.hidden && !gifControl.contains(event.target)) showGifMenu(false);
+    if (!resolutionOptions.hidden && !resolutionControl.contains(event.target)) showResolutionMenu(false);
+  });
+  resolutionControl.addEventListener('focusout', event => {
+    if (!resolutionOptions.hidden && !resolutionControl.contains(event.relatedTarget)) showResolutionMenu(false);
+  });
+  resolutionControl.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !resolutionOptions.hidden) {
+      event.preventDefault();
+      showResolutionMenu(false, true);
+      return;
+    }
+    const direction = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+    if (!direction) return;
+    event.preventDefault();
+    if (resolutionOptions.hidden) showResolutionMenu(true);
+    else {
+      const index = gridButtons.indexOf(document.activeElement);
+      const next = (index + direction + gridButtons.length) % gridButtons.length;
+      gridButtons[next].focus();
+    }
   });
   gifControl.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !gifOptions.hidden) {

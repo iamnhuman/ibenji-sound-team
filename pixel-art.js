@@ -64,10 +64,6 @@
     const [cx,cy]=point(scene,frame.size,...center),cos=Math.cos(angle),sin=Math.sin(angle);
     layer(scene,frame,base,rect,(x,y)=>[cx+(x-cx)*cos+(y-cy)*sin,cy-(x-cx)*sin+(y-cy)*cos],options);
   }
-  function blink(scene,frame,base,rect,center,open){
-    const [,cy]=point(scene,frame.size,...center),table=colorTable(scene);
-    layer(scene,frame,base,rect,(x,y)=>[x,cy+(y-cy)/Math.max(.12,open)],{select:ink=>ink!==0&&table[ink].neutral});
-  }
   function pose(time,keys){
     for(let i=1;i<keys.length;i++){
       const [end,...last]=keys[i];
@@ -413,37 +409,66 @@
     fallingDrops(scene, frame, time, hazardDrips, ['#a0dc18', '#d6ff45', '#506f13'].map(hex => frame.palette.indexOf(hex)));
   }
 
+  const discCenter = [.505, .360];
+  const discRadii = [.205, .190];
+  const discInner = .348, discOuter = .946;
+  const discSectors = 144;
+  const discTextures = new Map();
+
+  function visibleDisc(u, v) {
+    const dx = Math.abs(u - .345), dy = Math.abs(v - .254);
+    const star = dx / .033 + dy / .035 < 1 || dx < .008 && dy < .10 || dy < .007 && dx < .118;
+    return !star && v <= .409 && (u >= .417 || v <= .348);
+  }
+
+  function discTexture(scene, size, base) {
+    if (discTextures.has(size)) return discTextures.get(size);
+    const [cx, cy] = discCenter, [rx, ry] = discRadii;
+    const table = colorTable(scene);
+    const tracks = Math.max(8, Math.round(size * .118));
+    const texture = new Uint8Array(tracks * discSectors);
+    for (let track = 0; track < tracks; track++) {
+      const offset = track * discSectors;
+      const radius = discInner + (discOuter - discInner) * track / (tracks - 1);
+      const samples = [];
+      for (let sector = 0; sector < discSectors; sector++) {
+        const angle = sector * tau / discSectors;
+        const u = cx + Math.cos(angle) * rx * radius, v = cy + Math.sin(angle) * ry * radius;
+        if (!visibleDisc(u, v)) continue;
+        const [x, y] = point(scene, size, u, v).map(Math.floor);
+        const ink = base[y * size + x];
+        if (!ink) continue;
+        texture[offset + sector] = ink;
+        samples.push(sector);
+      }
+      // Bridge the sectors behind the lettering so the texture can make a full turn.
+      for (const [index, start] of samples.entries()) {
+        const end = samples[index + 1] ?? samples[0] + discSectors;
+        if (end - start <= 1) continue;
+        const left = table[texture[offset + start]].rgb;
+        const right = table[texture[offset + end % discSectors]].rgb;
+        for (let sector = start + 1; sector < end; sector++) {
+          const progress = (sector - start) / (end - start);
+          texture[offset + sector % discSectors] = nearest(scene, left.map((value, channel) =>
+            value + (right[channel] - value) * progress));
+        }
+      }
+    }
+    const surface = { tracks, texture };
+    discTextures.set(size, surface);
+    return surface;
+  }
+
   function animateDisc(scene, frame, base, phase) {
-    const { size } = frame;
-    const white = frame.palette.indexOf('#ffffff');
-    const cyan = frame.palette.indexOf(scene.accent);
-    const lit = shadeMap(scene, .23);
-    const star = (u, v) => {
-      const x = Math.abs(u - .345), y = Math.abs(v - .254);
-      return x / .033 + y / .035 < 1 || x < .008 && y < .10 || y < .007 && x < .118;
-    };
-    const cx = .505, cy = .359, rx = .207, ry = .190;
-    patch(scene, frame, [.292, .163, .423, .255], (ink, u, v) => {
+    const [cx, cy] = discCenter, [rx, ry] = discRadii;
+    const { tracks, texture } = discTexture(scene, frame.size, base);
+    patch(scene, frame, [.293, .169, .422, .241], (ink, u, v) => {
       const x = (u - cx) / rx, y = (v - cy) / ry;
       const radius = Math.hypot(x, y);
-      if (!ink || radius > .987 || radius < .348 || star(u, v)) return ink;
-      const turn = Math.atan2(y, x) - phase * 2;
-      const reflection = Math.abs(Math.sin((turn - .63) / 2));
-      if (radius > .943) return reflection < .080 ? white : ink;
-      // Reuse the visible upper sectors of the CD for the sectors behind the title.
-      const face = Math.max(-3.01, Math.min(-.014, -Math.acos(Math.cos(turn))));
-      let su = cx + Math.cos(face) * rx * radius;
-      let sv = cy + Math.sin(face) * ry * radius;
-      if (star(su, sv) || (su < .417 && sv > .347)) {
-        const clear = face < -Math.PI / 2 ? face + .36 : face - .36;
-        su = cx + Math.cos(clear) * rx * radius;
-        sv = cy + Math.sin(clear) * ry * radius;
-      }
-      const [sx, sy] = point(scene, size, su, sv).map(Math.floor);
-      const texture = base[sy * size + sx] || ink;
-      if (radius > .55 && reflection < .034) return radius > .87 ? white : cyan;
-      if (radius > .38 && reflection < .094) return lit[texture];
-      return texture;
+      if (!ink || radius > discOuter || radius < discInner || !visibleDisc(u, v)) return ink;
+      const track = Math.round((radius - discInner) / (discOuter - discInner) * (tracks - 1));
+      const sector = Math.round((Math.atan2(y, x) - phase) / tau * discSectors);
+      return texture[track * discSectors + (sector + 2 * discSectors) % discSectors] || ink;
     });
   }
 
@@ -724,8 +749,7 @@
         }
         const cranium = y < 178 + Math.sin(x * .016) * 19;
         const temple = x < 208 && y > 181 || x > 437 && y > 268;
-        const cheekLine = y > 306 && y < 316 && x > 226 && x < 320;
-        return cheekLine ? shade : cranium || x > 300 && y > 473 ? edge : temple ? shade : bone;
+        return cranium || x > 300 && y > 473 ? edge : temple ? shade : bone;
       }
       if (y >= 516 && y <= 611 && Math.abs(x - (277 - (y - 516) * .20)) < 32) {
         const notch = Math.floor((y - 516) / 6) % 3;
@@ -824,33 +848,40 @@
     }
   }
 
+  const streamDrops = [[.203, .04, .217], [.259, .10, .170], [.325, .14, .202], [.374, .20, .141],
+    [.437, .25, .165], [.286, .34, .210], [.480, .39, .124], [.223, .53, .252], [.339, .59, .176],
+    [.268, .65, .202], [.404, .69, .133], [.471, .75, .184], [.309, .81, .215], [.377, .90, .168], [.455, .98, .141]];
+
   function animateStreamDisc(scene, frame, base, time, table) {
     const { size } = frame;
-    const phase = time * tau / 1.5;
     const lime = frame.palette.indexOf(scene.accent);
-    const shadow = nearest(scene, [21, 107, 45]);
-    const green = ink => {
-      const [r, g, b] = table[ink].rgb;
-      return g > 63 && g > r * 1.55 && g > b * 1.25;
-    };
-    patch(scene, frame, [.325, .235, .353, .225], (ink, u, v, x, y) => {
-      const width = (u - .503) / .176;
-      const taper = Math.max(0, 1 - width ** 2);
-      if (v > .458 || v < .242 || !taper) return ink;
-      const shift = Math.round(size * .023 * taper * Math.sin(phase * 2 - (v - .242) * 13));
-      return base[(y - shift) * size + x];
-    });
-    layer(scene, frame, base, [.647, .122, .202, .391], (x, y) => [x - size * .022 * Math.sin(phase), y + size * .014 * Math.sin(phase * 2)], {
-      select: (ink, x, y) => green(ink) && (((x + .5) / size - .499) / .216) ** 2 + (((y + .5) / size - .349) / .218) ** 2 > 1.02,
-      padding: .035
-    });
+    const spark = nearest(scene, [174, 255, 139]);
+    const green = nearest(scene, [26, 175, 61]);
+    const shadow = nearest(scene, [14, 91, 36]);
+    const isGreen = table.map(({ rgb: [r, g, b] }) => g > 90 && g > r * 1.48 && g > b * 1.24);
     const cycle = time % 1.5;
-    for (let bit = 0; bit < 9; bit++) {
-      const age = (cycle - bit * .079) / .68;
-      if (age < 0 || age > 1) continue;
-      const [x, y] = point(scene, size, .692 + age * (.089 + bit % 3 * .026), .177 + bit * .035 + Math.sin(phase + bit) * age * .024);
-      const side = Math.max(1, Math.round(size * .012 * (1 - age * .48)));
-      square(frame, x, y, side, age > .67 ? shadow : lime);
+    for (const [index, [v, delay, drift]] of streamDrops.entries()) {
+      const age = (cycle - delay) / (.49 + (index % 4) * .065);
+      if (age < 0 || age >= 1) continue;
+
+      const rim = .499 + .216 * Math.sqrt(1 - ((v - .349) / .222) ** 2);
+      const [outer, row] = point(scene, size, rim + .024, v).map(Math.floor);
+      const [inner] = point(scene, size, rim - .050, v);
+      let column = outer;
+      while (column > inner && !(isGreen[base[row * size + column]] && isGreen[base[row * size + column - 1]])) column--;
+      if (column <= inner) continue;
+
+      const drop = .541 + (index % 3) * .006 - v;
+      const x = column + .5 + size * drift * age * (2 - age);
+      const y = row + .5 + size * drop * age * (.12 + .88 * age);
+      const side = Math.max(1, Math.round(size * (index % 3 === 0 ? .024 : .015) * (1 - age * .58)));
+      if (age > .055 && age < .31) frame.pixels[row * size + column] = age < .22 ? 0 : shadow;
+      if (age > .30 && age < .86) {
+        const trail = age - .105;
+        square(frame, column + .5 + size * drift * trail * (2 - trail), row + .5 + size * drop * trail * (.12 + .88 * trail), 1, shadow);
+      }
+      square(frame, x, y, side, age < .12 ? spark : age < .57 ? lime : age < .88 ? green : shadow);
+      if (side > 1 && age > .25 && age < .61) square(frame, x + side, y - side * .5, 1, green);
     }
   }
 
@@ -933,14 +964,24 @@
     });
 
     const [laugh] = pose(time % 1.5, laughKeys);
-    patch(scene, frame, [.355, .375, .284, .157], (ink, u, v, x, y) => {
-      const start = .394 + (u - .494) * .10;
-      const height = (v - start) / (.532 - start);
-      const width = (u - .496) / .147;
-      if (height < 0 || height > 1 || Math.abs(width) >= 1) return ink;
-      // The lips hold at the corners while the lower teeth and cheek stretch together.
-      const drop = laugh * .045 * Math.sin(height * Math.PI) * height ** .80 * (1 - width ** 2);
-      return base[Math.round(y - drop * size) * size + x];
+    patch(scene, frame, [.355, .382, .284, .152], (ink, u, v, x) => {
+      const across = (u - .355) / .284;
+      if (across <= 0 || across >= 1 || !laugh) return ink;
+      const arch = Math.sin(across * Math.PI);
+      const seam = .381 + across * .049 + arch * .063;
+      const collar = .534;
+      if (v <= seam || v >= collar) return ink;
+
+      // Open the gap under the upper teeth and carry the lower teeth as a row.
+      const jawTop = seam + .011;
+      const jawBottom = seam + .042;
+      const drop = Math.min(laugh * arch * (laugh > 0 ? .045 : .019), (collar - jawBottom) * .86);
+      const top = jawTop + drop, bottom = jawBottom + drop;
+      let source = v - drop;
+      if (v < top) source = seam + (v - seam) * (jawTop - seam) / (top - seam);
+      else if (v > bottom) source = collar - (collar - v) * (collar - jawBottom) / (collar - bottom);
+      const [, sy] = point(scene, size, u, source);
+      return base[Math.floor(sy) * size + x];
     });
     if (laugh < .26) return;
     for (const [u, v] of [[.439, .320], [.587, .345]]) {
@@ -954,9 +995,10 @@
     }
   }
 
-  // The inner field of the crest keeps the black horse separate from the shield outline.
-  const shieldField = [[119, 95], [158, 74], [194, 60], [230, 61], [267, 75], [293, 92], [290, 143],
-    [273, 184], [246, 220], [205, 252], [168, 220], [146, 187], [127, 145]];
+  const horseOutline = [[134, 147], [137, 114], [152, 103], [168, 102], [163, 91], [169, 78], [194, 62],
+    [215, 62], [241, 80], [244, 113], [261, 106], [274, 112], [274, 138], [261, 158], [256, 184],
+    [243, 201], [220, 218], [206, 236], [189, 238], [183, 206], [163, 202], [162, 173], [142, 166]];
+  const horseHinge = [.493, .552];
   const rearKeys = [[0, 0], [.19, -.071], [.43, .136], [.62, .108], [.78, -.041], [.98, 0], [1.5, 0]];
 
   function animateHorse(scene, frame, base, time, table) {
@@ -964,9 +1006,9 @@
     const [angle] = pose(cycle, rearKeys);
     const { size } = frame;
     if (angle) {
-      const outline = shieldField.map(([x, y]) => point(scene, size, x / 410, y / 410));
+      const outline = horseOutline.map(([x, y]) => point(scene, size, x / 410, y / 410));
       const [x, y] = point(scene, size, .670, .244).map(Math.floor);
-      rotate(scene, frame, base, [.330, .145, .352, .435], [.493, .552], angle, {
+      rotate(scene, frame, base, [.330, .145, .352, .435], horseHinge, angle, {
         select: (ink, px, py) => table[ink].light < 64 && insideOutline(outline, px + .5, py + .5),
         background: base[y * size + x],
         padding: .052
@@ -975,11 +1017,29 @@
     const green = frame.palette.indexOf('#98c04d');
     const pale = frame.palette.indexOf('#cbd96d');
     const shade = frame.palette.indexOf('#557929');
+    const [hingeX, hingeY] = horseHinge;
+    const dx = .564 - hingeX, dy = .408 - hingeY;
+    const rumpX = hingeX + dx * Math.cos(angle) - dy * Math.sin(angle);
+    const rumpY = hingeY + dx * Math.sin(angle) + dy * Math.cos(angle);
+    const beforeSmoke = frame.pixels.slice();
+    const [rumpColumn, rumpRow] = point(scene, size, rumpX, rumpY).map(Math.floor);
+    const scan = rumpRow * size;
+    let vent = rumpColumn;
+    while (vent > rumpColumn - size * .036 && table[beforeSmoke[scan + vent]].light >= 64) vent--;
+    while (vent < rumpColumn + size * .055 && table[beforeSmoke[scan + vent]].light < 64) vent++;
+    const burst = cycle - .37;
+    if (burst >= 0 && burst < .22) {
+      const length = Math.max(1, Math.round(size * (.017 + Math.min(burst, .11) * .34)));
+      for (let cell = 0; cell < length; cell++) {
+        square(frame, vent + .5 + cell, rumpRow + .5 - cell * .22, 1, cell < length / 2 ? shade : green);
+      }
+    }
     for (let puff = 0; puff < 3; puff++) {
-      const age = (cycle - .39 - puff * .11) / .56;
+      const age = (burst - puff * .086) / .55;
       if (age < 0 || age > 1) continue;
-      const [x, y] = point(scene, size, .567 + age * (.227 + puff * .024), .397 - age * (.063 + puff * .026));
-      const cell = Math.max(1, Math.round(size * (.012 + Math.sin(Math.PI * age) * .013)));
+      const x = vent + .5 + size * age * (.080 + puff * .011);
+      const y = rumpRow + .5 - size * age * (.042 + puff * .015);
+      const cell = Math.max(1, Math.round(size * (.014 + Math.sin(Math.PI * age) * .018)));
       if (age < .70) {
         square(frame, x + cell * .23, y + cell * .37, cell + 1, shade);
         square(frame, x - cell * .70, y, cell, green);
@@ -989,6 +1049,21 @@
         square(frame, x - cell, y + cell, 1, green);
         square(frame, x + cell, y - cell, 1, pale);
       }
+    }
+    patch(scene, frame, [.52, .27, .22, .22], (ink, _u, _v, x, y) => {
+      const field = beforeSmoke[y * size + x];
+      const [r, g, b] = table[field].rgb;
+      return r > 125 && g > 115 && b < r * .65 ? ink : field;
+    });
+    // Keep the perimeter of the shield fixed even on the coarsest pixel grid.
+    const [, top,, bottom] = bounds(scene, size, [0, .12, 1, .51]);
+    for (let y = top; y < bottom; y++) {
+      const offset = y * size;
+      const row = base.subarray(offset, offset + size);
+      const left = row.findIndex(Boolean) + 2;
+      const right = Math.max(left, row.findLastIndex(Boolean) - 1);
+      frame.pixels.set(row.subarray(0, left), offset);
+      frame.pixels.set(row.subarray(right), offset + right);
     }
   }
 
@@ -1088,46 +1163,206 @@
     }
   }
 
-  function animateReactor(scene, frame, base, phase) {
+  const serpentKeys = [[0, 0, 0], [.18, .06, .08], [.38, .66, -.18], [.52, 1, -.51],
+    [.63, .91, -.35], [.75, 1, -.52], [.90, .45, -.14], [1.13, 0, 0], [1.5, 0, 0]];
+
+  function animateOuroboros(scene, frame, base, time) {
+    const cycle = time % 1.5;
+    const phase = cycle * tau / 1.5;
+    const spring = Math.sin(phase / 2) ** 2;
+    const [pull, bite] = pose(cycle, serpentKeys);
     const { size } = frame;
-    const cosine = Math.cos(phase), sine = Math.sin(phase);
-    patch(scene, frame, [.353, .135, .294, .294], (ink, u, v) => {
-      const dx = u - .5, dy = v - .283;
-      if (dx ** 2 + dy ** 2 > .132 ** 2) return ink;
-      const [x, y] = point(scene, size, .5 + dx * cosine + dy * sine, .283 + dy * cosine - dx * sine).map(Math.floor);
-      return base[y * size + x];
+    const textBounds = scene.text.map(rect => bounds(scene, size, rect));
+    const inText = (x, y) => textBounds.some(([left, top, right, bottom]) => x >= left && x < right && y >= top && y < bottom);
+
+    // A single continuous warp bends the armor and cables together.
+    patch(scene, frame, [0, 0, 1, 1], (ink, u, v, x, y) => {
+      if (inText(x, y)) return ink;
+      const dx = u - .5, dy = v - .5;
+      const around = Math.atan2(dy, dx);
+      const room = Math.min(1, Math.min(u, 1 - u, v, 1 - v) * 10);
+      const section = (around + Math.PI) * 10 / tau + .22;
+      const hinge = Math.sin(Math.PI * (section - Math.floor(section))) ** 2;
+      const crank = hinge * Math.sin(phase * 2 - Math.floor(section) * .72);
+      const tension = .029 * pull + .067 * spring * crank;
+      const twist = .027 * spring * hinge * Math.sin(phase * 2 - Math.floor(section) * .72 - .8);
+      let su = u + room * (dx * tension - dy * twist);
+      let sv = v + room * (dy * tension + dx * twist);
+
+      const tail = Math.max(0, 1 - ((u - .868) / .144) ** 2 - ((v - .355) / .147) ** 2) ** 2;
+      su += pull * .046 * tail;
+      sv += pull * .068 * tail;
+
+      const jaw = Math.max(0, 1 - ((u - .737) / .147) ** 2 - ((v - .295) / .137) ** 2) ** 2;
+      const angle = bite * jaw * Math.max(0, Math.min(1, (v - .205) / .085));
+      const jx = su - .643, jy = sv - .198;
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      su = .643 + jx * cos + jy * sin;
+      sv = .198 - jx * sin + jy * cos;
+
+      const [sourceX, sourceY] = point(scene, size, su, sv).map(Math.floor);
+      if (inText(sourceX, sourceY)) return ink;
+      if (sourceX < 0 || sourceX >= size || sourceY < 0 || sourceY >= size) return 0;
+      return base[sourceY * size + sourceX];
+    });
+    // Drop lone cells introduced when thin armor edges round onto a new grid position.
+    const neighbors = [-size - 1, -size, -size + 1, -1, 1, size - 1, size, size + 1];
+    const { pixels } = frame;
+    for (let y = 1; y < size - 1; y++) for (let x = 1; x < size - 1; x++) {
+      const index = y * size + x;
+      if (!base[index] && pixels[index] && neighbors.every(offset => !pixels[index + offset])) pixels[index] = 0;
+    }
+  }
+
+  const markKeys = [[0, 0], [.16, -.10], [.41, .37], [.59, .27], [.77, -.105], [1.02, 0], [1.5, 0]];
+
+  function animateRingMark(scene, frame, base, time, phase) {
+    const { size } = frame;
+    const [angle] = pose(time % 1.5, markKeys);
+    const [cx, cy] = point(scene, size, .496, .352);
+    if (angle) rotate(scene, frame, base, [.300, .181, .379, .354], [.496, .352], angle,
+      { select: (ink, x, y) => ink !== 0 && Math.hypot(x + .5 - cx, y + .5 - cy) < size * .235, padding: .087 });
+    const silver = nearest(scene, [146, 146, 146]);
+    patch(scene, frame, [.218, .026, .560, .652], (ink, _u, _v, x, y) => {
+      const dx = x + .5 - cx, dy = y + .5 - cy;
+      const r = Math.hypot(dx, dy) / size;
+      const scan = Math.abs(Math.sin((Math.atan2(dy, dx) - phase * 2) / 2));
+      return ink && r > .237 && r < .281 && scan < .117 ? silver : ink;
     });
   }
 
-  const ouroborosGears = [[466, 194, 35], [211, 394, 37], [273, 1001, 39], [807, 1114, 39], [891, 233, 36]];
-
-  function animateOuroboros(scene, frame, base, phase, table) {
+  function animateRedRoof(scene, frame, time) {
     const { size } = frame;
-    const silver = frame.palette.indexOf('#bfccd8');
-    const steel = frame.palette.indexOf('#8795a6');
-    const white = frame.palette.indexOf('#ffffff');
-    patch(scene, frame, [.011, .013, .977, .973], (ink, u, v) => {
-      if (!ink || table[ink].light < 110) return ink;
-      const dx = u - .5, dy = v - .51;
-      const radius = dx ** 2 + dy ** 2;
-      if (radius < .33 ** 2 || radius > .52 ** 2) return ink;
-      const distance = Math.abs(Math.sin((Math.atan2(dy, dx) - phase) / 2));
-      return distance < .035 ? white : distance < .122 ? silver : ink;
-    });
-    for (const [index, [rawX, rawY, rawRadius]] of ouroborosGears.entries()) {
-      const u = rawX / 1254, v = rawY / 1254, r = rawRadius / 1254;
-      const turn = phase * (index % 2 ? -2 : 2);
-      const cosine = Math.cos(turn), sine = Math.sin(turn);
-      patch(scene, frame, [u - r, v - r, r * 2, r * 2], (ink, x, y) => {
-        const dx = x - u, dy = y - v;
-        const distance = Math.hypot(dx, dy);
-        if (distance > r) return ink;
-        const spoke = Math.abs(Math.sin((Math.atan2(dy, dx) - turn) * 2));
-        if (distance < r * .67 && distance > r * .14 && spoke < .21) return steel;
-        const [sx, sy] = point(scene, size, u + dx * cosine + dy * sine, v + dy * cosine - dx * sine).map(Math.floor);
-        return base[sy * size + sx];
-      });
+    const ash = nearest(scene, [108, 108, 108]);
+    const smoke = nearest(scene, [76, 76, 76]);
+    const soot = nearest(scene, [30, 27, 27]);
+    const [, roofEdge] = point(scene, size, 0, .064);
+    for (let puff = 0; puff < 22; puff++) {
+      const age = (time - puff * .111) / 1.01;
+      if (age <= 0 || age >= 1) continue;
+      const outlet = puff % 4 - 1.5;
+      const direction = Math.sign(outlet);
+      const drift = outlet * .051 + direction * age * (.066 + (puff % 3) * .020);
+      const curl = .029 * Math.sin(age * 4.4 + puff * 1.37) * age;
+      const [x, lift] = point(scene, size, .49 + drift + curl, .060 - age * (.151 + (puff % 3) * .013));
+      const cell = Math.max(1, Math.round(size * (.017 + age * .025)));
+      const y = Math.min(lift, Math.floor(roofEdge) - cell * 1.55);
+      if (age < .82) {
+        square(frame, x, y, cell * 2 + 1, age < .57 ? smoke : soot);
+        square(frame, x + direction * cell * .55, y - cell * .69, cell + 1, age < .63 ? ash : smoke);
+        square(frame, x - direction * cell, y + cell * .36, cell, age < .57 ? smoke : soot);
+        square(frame, x + cell * .87, y + cell * .68, cell, soot);
+      } else {
+        square(frame, x - cell, y, Math.max(1, cell - 1), soot);
+        square(frame, x + cell, y - cell, 1, smoke);
+      }
     }
+  }
+
+  const shoeWing = [[263, 60], [278, 42], [318, 30], [383, 28], [435, 18], [440, 32], [428, 53],
+    [406, 67], [378, 79], [350, 86], [322, 107], [293, 117], [282, 133], [268, 126], [266, 102], [264, 84]];
+  const shoeKeys = [[0, 0], [.23, .21], [.46, -.15], [.63, .17], [.82, -.10], [1.06, 0], [1.5, 0]];
+
+  function animateWingedShoe(scene, frame, base, time, table) {
+    const cycle = time % 1.5;
+    const [angle] = pose(cycle, shoeKeys);
+    const { size } = frame;
+    const wing = shoeWing.map(([x, y]) => point(scene, size, x / 502, y / 404));
+    if (angle) rotate(scene, frame, base, [.519, .037, .360, .303], [.553, .208], angle, {
+      select: (ink, x, y) => {
+        const [r, g, b] = table[ink].rgb;
+        return r > 82 && g > 54 && r > b * 1.55 && insideOutline(wing, x + .5, y + .5);
+      }, padding: .087
+    });
+    const gold = frame.palette.indexOf(scene.accent);
+    for (let i = 0; i < 4; i++) {
+      const age = (cycle - .30 - i * .067) / .38;
+      if (age < 0 || age >= 1) continue;
+      const [x, y] = point(scene, size, .332 - age * (.147 + i * .018), .392 + i * .024 + age * .029);
+      const step = Math.max(1, Math.round(size * .012 * (1 - age * .38)));
+      square(frame, x, y, step, gold);
+      if (age < .55) square(frame, x - step, y + step, 1, gold);
+    }
+  }
+
+  function animateFlameType(scene, frame, base, time, phase, table) {
+    const { size } = frame;
+    const [width, height] = scene.placement.slice(2);
+    const flameBounds = scene.flameBounds ?? [.053, .006, .910, .361];
+    const flameTop = flameBounds[1], flameHeight = flameBounds[3];
+    const hot = ink => {
+      const [r, g, b] = table[ink].rgb;
+      return r > 79 && r > g * .97 && r > b * 1.48;
+    };
+    patch(scene, frame, flameBounds, (ink, u, v, x, y) => {
+      const length = Math.max(0, Math.min(1, (flameTop + flameHeight - .004 - v) / (flameHeight - .032)));
+      const tongue = Math.floor(u * 10);
+      const bend = Math.sin(phase * 4 + tongue * 1.28) * .023 * length ** 1.38;
+      const lift = Math.sin(phase * 5 + tongue * 1.67) * .061 * length ** 1.24;
+      const sx = Math.round(x - bend * width * size), sy = Math.round(y + lift * height * size);
+      const sample = sx >= 0 && sx < size && sy >= 0 && sy < size ? base[sy * size + sx] : 0;
+      if (hot(sample)) return sample;
+      return hot(ink) ? 0 : ink;
+    });
+    const gold = frame.palette.indexOf('#ffd91d');
+    const orange = frame.palette.indexOf(scene.accent);
+    const cycle = time % 1.5;
+    for (const [i, u] of [.167, .272, .436, .524, .663, .852, .932].entries()) {
+      const age = (cycle - .12 - i * .096) / .56;
+      if (age < 0 || age > 1) continue;
+      const [x, y] = point(scene, size, u + Math.sin(age * 5 + i) * .030 * age, flameTop + .114 - age * (.086 + i % 3 * .019));
+      square(frame, x, y, Math.max(1, Math.round(size * .013 * (1 - age * .58))), age < .37 ? gold : orange);
+    }
+  }
+
+  const greenEyeKeys = [[0, 1], [.19, .94], [.44, .13], [.54, .17], [.72, 1], [1.5, 1]];
+
+  function animateGreenEye(scene, frame, base, time, table) {
+    const [open] = pose(time % 1.5, greenEyeKeys);
+    if (open === 1) return;
+    const { size } = frame;
+    const isGreen = ink => {
+      const [r, g, b] = table[ink].rgb;
+      return g > 70 && g > r * .82 && b < g * .62;
+    };
+    const [fieldX, fieldY] = point(scene, size, .56, .101).map(Math.floor);
+    const field = base.subarray(fieldY * size, (fieldY + 1) * size);
+    const split = field.findIndex(isGreen);
+    if (split < 0) return;
+    const lime = field[fieldX];
+    const middle = .307;
+    const slit = .58 / (size * scene.placement[3]);
+    // Blink the eye mask against the fixed two-color field.
+    patch(scene, frame, [.172, .116, .570, .407], (ink, u, v, x) => {
+      if (u > .742 || v < .116 || v > .523) return ink;
+      const sv = middle + (v - middle) / open;
+      const right = x >= split;
+      let eye = false;
+      if (open < .18) {
+        eye = u > .192 && u < .722 && Math.abs(v - middle) < slit;
+      } else if (sv >= .116 && sv <= .523) {
+        const [, sy] = point(scene, size, u, sv);
+        eye = right !== isGreen(base[Math.floor(sy) * size + x]);
+      }
+      return right !== eye ? lime : 0;
+    });
+  }
+
+  function animateUmbrella(scene, frame, phase, table) {
+    const coral = frame.palette.indexOf('#ff6250');
+    const silver = frame.palette.indexOf('#c0bdb6');
+    const white = frame.palette.indexOf('#ffffff');
+    const [cx, cy] = point(scene, frame.size, .506, .313);
+    patch(scene, frame, [.267, .02, .475, .573], (ink, _u, _v, x, y) => {
+      const dx = x + .5 - cx, dy = y + .5 - cy;
+      const { rgb: [r, g, b], light } = table[ink];
+      if (Math.hypot(dx, dy) < frame.size * .046 || r < 104) return ink;
+      const red = r > g * 1.50 && r > b * 1.43;
+      const glow = Math.cos(Math.atan2(dy, dx) - phase * 2);
+      if (glow > .92) return red ? coral : light > 158 ? white : ink;
+      if (glow < -.62 && light > 180) return silver;
+      return ink;
+    });
   }
 
   const tongueKeys = [[0, 0, 0], [.14, 0, 0], [.33, 8, -3.5], [.46, 13, 4.2], [.56, 11, 6.4],
@@ -1187,7 +1422,7 @@
       }
     }
     const head = .12 + cycle * .54;
-    patch(scene, frame, [.105, .920, .765, .047], (ink, u) => ink === pink && Math.abs(u - head) < .025 ? white : ink);
+    patch(scene, frame, [.079, .914, .806, .064], (ink, u) => ink === pink && Math.abs(u - head) < .025 ? white : ink);
   }
   function restoreText(scene,frame,base){
     for(const rect of scene.text){
@@ -1206,7 +1441,6 @@
       const [r, g, b] = table[ink].rgb;
       return r > 100 && r > g * 1.5 && r > b * 1.4;
     };
-    const blinkOpen=1-.9*Math.max(0,1-Math.abs(t-.46)/.24);
     switch(scene.motion){
       case 'tongue':
         animateTongue(scene,frame,base,t);
@@ -1284,10 +1518,6 @@
       case 'x-ray':
         animateThermal(scene, frame, t, table);
         break;
-      case 'moon':
-        blink(scene,frame,base,[.46,.36,.12,.08],[.52,.40],blinkOpen);
-        patch(scene,frame,[.59,.09,.18,.18],ink=>ink?light[ink]:ink);
-        break;
       case 'cracks':
         animateMonitor(scene, frame, t, table);
         break;
@@ -1310,9 +1540,6 @@
         break;
       case 'bubbles':
         animateBubbles(scene, frame, base, t);
-        break;
-      case 'reactor':
-        animateReactor(scene, frame, base, phase);
         break;
       case 'console-boot':
         animateConsole(scene, frame, base, phase, table);
@@ -1342,7 +1569,25 @@
         animateHarp(scene, frame, base, t, table);
         break;
       case 'mecha-ouroboros':
-        animateOuroboros(scene, frame, base, phase, table);
+        animateOuroboros(scene, frame, base, t);
+        break;
+      case 'ring-mark':
+        animateRingMark(scene, frame, base, t, phase);
+        break;
+      case 'red-roof':
+        animateRedRoof(scene, frame, t);
+        break;
+      case 'winged-shoe':
+        animateWingedShoe(scene, frame, base, t, table);
+        break;
+      case 'flame-type':
+        animateFlameType(scene, frame, base, t, phase, table);
+        break;
+      case 'green-eye':
+        animateGreenEye(scene, frame, base, t, table);
+        break;
+      case 'umbrella':
+        animateUmbrella(scene, frame, phase, table);
         break;
       case 'starfield': {
         const sky = nearest(scene, [19, 51, 227]);
@@ -1363,10 +1608,19 @@
         animateVector(scene, frame, base, t, red);
         break;
       case 'metal-tips': {
-        const flex = .13 * Math.sin(phase * 2);
+        const swing = Math.sin(phase * 2);
+        const flex = .13 * swing;
         const edges = { select: neutral, padding: .045 };
         rotate(scene, frame, base, [.035, .44, .145, .51], [.18, .52], flex, edges);
         rotate(scene, frame, base, [.82, .44, .145, .51], [.82, .52], -flex, edges);
+        for (const [left, width, direction] of [[.14, .30, 1], [.584, .202, -1]]) {
+          patch(scene, frame, [left, 0, width, .183], (ink, u, v) => {
+            const reach = Math.max(0, (.183 - v) / .183);
+            const drift = direction * swing * .040 * reach ** 1.25;
+            const [x, y] = point(scene, frame.size, u + drift, v).map(Math.floor);
+            return base[y * frame.size + x];
+          });
+        }
         break;
       }
     }

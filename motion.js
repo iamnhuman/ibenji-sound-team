@@ -17,18 +17,22 @@
     wave: [.60, .34], violet: [.35, .30], 'blood-eye': [.5, .52],
     orbit: [.5, .36], specter: [.69, .22], spine: [.37, .38],
     satellite: [.47, .25], crt: [.39, .38], planet: [.48, .40], torii: [.57, .30], thermal: [.5, .36],
-    'lunar-cat': [.5,.4], 'broken-computer': [.46,.3], 'cyber-hand': [.54,.4],
+    'broken-computer': [.46,.3], 'cyber-hand': [.54,.4],
     'pocket-pet': [.5,.38], hazard: [.5,.42], candy: [.5,.28], chrome: [.5,.25],
-    slime: [.5,.4], radiation: [.5,.29],
+    slime: [.5,.4],
     'space-emblem': [.5, .46], 'red-bulls': [.51, .36], 'red-vector': [.46, .5], 'metal-mark': [.5, .45],
     console: [.5, .44], 'foot-stamp': [.51, .4], 'stream-disc': [.5, .34],
     'violet-player': [.54, .39], carnival: [.51, .38], 'prancing-horse': [.5, .35],
-    crocodile: [.53, .38], 'chroma-note': [.50, .34], 'golden-harp': [.5, .32], 'mecha-ouroboros': [.5, .51]
+    crocodile: [.53, .38], 'chroma-note': [.50, .34], 'golden-harp': [.5, .32], 'mecha-ouroboros': [.5, .51],
+    'ring-mark': [.50, .38], 'red-roof': [.50, .37], 'winged-shoe': [.55, .34], 'flame-type': [.5, .44],
+    'green-eye': [.47, .36], umbrella: [.506, .35], 'flame-crest': [.5, .49]
   };
   const clips = pixelArt.scenes.map((scene, index) => ({
     scene,
+    number: index + 1,
     start: index * clipLength,
     end: (index + 1) * clipLength,
+    // The source number keeps each transition tied to its original emblem.
     cutStyle: cuts[(scene.number - 1) % cuts.length]
   }));
   const duration = clipLength * clips.length;

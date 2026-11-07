@@ -30,6 +30,17 @@ function sample(raw,side,region={left:0,top:0,width:side,height:side},magnify=1)
 }
 
 function prepareSource(raw,scene) {
+  if(scene.inkRegion) {
+    const width=raw.readUInt32LE(0),height=raw.readUInt32LE(4);
+    const {rect:[u,v,w,h],threshold}=scene.inkRegion;
+    const left=Math.floor(u*width),right=Math.ceil((u+w)*width);
+    const top=Math.floor(v*height),bottom=Math.ceil((v+h)*height);
+    for(let y=top;y<bottom;y++)for(let x=left;x<right;x++) {
+      const offset=8+(y*width+x)*4;
+      const ink=Math.min(raw[offset],raw[offset+1],raw[offset+2])>=threshold?255:0;
+      raw.fill(ink,offset,offset+3);
+    }
+  }
   if(scene.edgeTrim||scene.erase) {
     const width=raw.readUInt32LE(0),height=raw.readUInt32LE(4);
     if(scene.edgeTrim) {

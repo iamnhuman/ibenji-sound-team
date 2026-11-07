@@ -12,13 +12,14 @@ const brand = require('../brand.js');
 const resolutions = [1000, 500, 200, 100, 50];
 assert.deepEqual(clips.map(({ scene }) => scene.id), [
   'eye', 'girl', 'skull', 'scream', 'wave', 'violet', 'blood-eye', 'orbit', 'specter', 'spine', 'satellite', 'crt', 'planet', 'torii', 'thermal',
-  'lunar-cat', 'broken-computer', 'cyber-hand', 'pocket-pet', 'hazard', 'candy', 'chrome', 'slime', 'radiation',
+  'broken-computer', 'cyber-hand', 'pocket-pet', 'hazard', 'candy', 'chrome', 'slime',
   'space-emblem', 'red-bulls', 'red-vector', 'metal-mark',
-  'console', 'foot-stamp', 'stream-disc', 'violet-player', 'carnival', 'prancing-horse', 'crocodile', 'chroma-note', 'golden-harp', 'mecha-ouroboros'
+  'console', 'foot-stamp', 'stream-disc', 'violet-player', 'carnival', 'prancing-horse', 'crocodile', 'chroma-note', 'golden-harp', 'mecha-ouroboros',
+  'ring-mark', 'red-roof', 'winged-shoe', 'flame-type', 'green-eye', 'umbrella', 'flame-crest'
 ]);
-assert.deepEqual(scenes.map(scene => scene.number), Array.from({ length: 40 }, (_, index) => index + 1).filter(number => number !== 25 && number !== 32));
+assert.deepEqual(clips.map(clip => clip.number), Array.from({ length: clips.length }, (_, index) => index + 1));
 assert.deepEqual([...new Set(clips.map(clip => clip.cutStyle))], ['iris', 'beam', 'splice', 'cascade']);
-assert.equal(duration, 114);
+assert.equal(duration, 129);
 for (const scene of scenes) {
   assert(fs.existsSync(path.resolve(__dirname, '../img/done', scene.source)), 'A completed source must be in done');
   assert(!fs.existsSync(path.resolve(__dirname, '../img/todo', scene.source)), 'A completed source must leave todo');
@@ -181,7 +182,7 @@ for (const [index, color] of cat.pixels.entries()) {
 const html = fs.readFileSync(path.resolve(__dirname, '../index.html'), 'utf8');
 assert.deepEqual([...html.matchAll(/data-size="(\d+)"/g)].map(match => Number(match[1])), resolutions);
 assert.match(html, /data-size="500" aria-pressed="true"/);
-for (const id of ['film-prev', 'filmstrip', 'film-next', 'gif-full', 'gif-current']) assert(html.includes(`id="${id}"`));
+for (const id of ['film-prev', 'filmstrip', 'film-next', 'resolution-options', 'gif-full', 'gif-current']) assert(html.includes(`id="${id}"`));
 for (const file of ['style.css', 'pixel-originals.js', 'eye-motion.js', 'pixel-art.js', 'motion.js', 'pixel-export.js', 'brand.js', 'app.js']) assert(html.includes(`"${file}"`));
 for (const file of ['pixel-type.js', 'pixel-scenes.js', 'pixel-sprites.js']) assert(!html.includes(file), 'Recreated art and replacement fonts must not be loaded');
 

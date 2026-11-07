@@ -74,6 +74,20 @@
   const resting = Uint8Array.from(stencil.join(''), cell => '.#+'.indexOf(cell));
   const palette = ['#000000', '#f6f4fa', '#ff1910', '#a61e13', '#ff6517', '#ffad32', '#ffe687'];
   const flameRows = 41;
+  const catInterior = new Uint8Array(resting.length);
+  // Retain the black inside the cat's outline and let the canvas show through around it.
+  const insideCat = [28 * width + 31];
+  catInterior[insideCat[0]] = 1;
+  for (let index = 0; index < insideCat.length; index++) {
+    const cell = insideCat[index];
+    const x = cell % width, y = Math.floor(cell / width);
+    for (const neighbor of [x > 0 ? cell - 1 : -1, x + 1 < width ? cell + 1 : -1,
+      y > 0 ? cell - width : -1, y + 1 < flameRows ? cell + width : -1]) {
+      if (neighbor < 0 || resting[neighbor] || catInterior[neighbor]) continue;
+      catInterior[neighbor] = 1;
+      insideCat.push(neighbor);
+    }
+  }
   const top = new Int16Array(width).fill(height);
   const bottom = new Int16Array(width).fill(-1);
   const catEdge = new Int16Array(width).fill(height);
@@ -125,7 +139,7 @@
   function mount() {
     const link = document.getElementById('site-brand');
     const canvas = link.querySelector('canvas');
-    const context = canvas.getContext('2d', { alpha: false });
+    const context = canvas.getContext('2d');
     const image = context.createImageData(width, height);
     let hovering = false;
     let focused = false;
@@ -133,7 +147,11 @@
     let previousStep = -1;
 
     function paint(time) {
-      root.PixelArt.rgba(frameAt(time), image.data);
+      const frame = frameAt(time);
+      root.PixelArt.rgba(frame, image.data);
+      for (let i = 0; i < frame.pixels.length; i++) {
+        if (!frame.pixels[i] && !catInterior[i]) image.data[i * 4 + 3] = 0;
+      }
       context.putImageData(image, 0, 0);
     }
 

@@ -30,22 +30,22 @@
   </main>
 
   <footer class="controls" aria-label="Управление анимацией">
-    <svg class="deck-sigil deck-sigil-left" viewBox="0 0 24 28" aria-hidden="true" focusable="false">
-      <g id="deck-sigil-pattern">
-        <path class="sigil-frame" d="M24 1h-7v2h-3v3h-2v3H9v3H6v4h3v3h3v3h2v3h3v2h7v-2h-6v-2h-2v-3h-2v-3h-3v-2H9v-2h2v-2h3V8h2V5h2V3h6z"/>
-        <path class="sigil-core" fill-rule="evenodd" d="M18 8h2v3h2v2h2v2h-2v2h-2v3h-2v-3h-2v-2h-2v-2h2v-2h2zm0 5v2h2v-2z"/>
-        <path class="sigil-sparks" d="M2 13h2v2H2zM7 5h2v2H7zM5 21h2v2H5zM1 8h1v1H1zM2 19h1v1H2zM20 5h3v1h-3zM20 22h3v1h-3z"/>
-      </g>
-    </svg>
-    <svg class="deck-sigil deck-sigil-right" viewBox="0 0 24 28" aria-hidden="true" focusable="false">
-      <use href="#deck-sigil-pattern"/>
-    </svg>
-    <button id="playback" class="icon-button playback" type="button" data-playing="true" aria-label="Пауза" title="Пауза">
-      <svg width="24" height="24" viewBox="0 0 12 12" aria-hidden="true">
-        <path class="play-icon" d="M3 1h2v1h2v2h2v1h2v2H9v1H7v2H5v1H3z"/>
-        <path class="pause-icon" d="M3 2h2v8H3zM7 2h2v8H7z"/>
-      </svg>
-    </button>
+    <div class="view-controls">
+      <button id="playback" class="icon-button playback" type="button" data-playing="true" aria-label="Пауза" title="Пауза">
+        <svg width="24" height="24" viewBox="0 0 12 12" aria-hidden="true">
+          <path class="play-icon" d="M3 1h2v1h2v2h2v1h2v2H9v1H7v2H5v1H3z"/>
+          <path class="pause-icon" d="M3 2h2v8H3zM7 2h2v8H7z"/>
+        </svg>
+      </button>
+      <div class="zoom-controls" role="group" aria-label="Масштаб просмотра">
+        <button id="zoom-out" class="icon-button" type="button" aria-label="Уменьшить масштаб" title="Уменьшить масштаб">
+          <svg width="20" height="20" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 4h8v2H1z"/></svg>
+        </button>
+        <button id="zoom-in" class="icon-button" type="button" aria-label="Увеличить масштаб" title="Увеличить масштаб">
+          <svg width="20" height="20" viewBox="0 0 10 10" aria-hidden="true"><path d="M4 1h2v3h3v2H6v3H4V6H1V4h3z"/></svg>
+        </button>
+      </div>
+    </div>
     <div class="transport">
       <button id="film-prev" class="film-nav" type="button" aria-label="Предыдущий кадр" title="Предыдущий кадр ←" aria-controls="artwork filmstrip" aria-keyshortcuts="ArrowLeft" hidden>
         <svg width="12" height="20" viewBox="0 0 6 10" aria-hidden="true"><path d="M4 0h2v2H4v2H2v2h2v2h2v2H4V8H2V6H0V4h2V2h2z"/></svg>
@@ -57,21 +57,18 @@
     </div>
 
     <div class="output-controls">
-      <div class="resolutions" role="group" aria-label="Разрешение кадра">
-        <button type="button" data-size="1000" aria-pressed="false" aria-label="1000 на 1000 пикселей"><span aria-hidden="true" data-pixel-label>1000</span></button>
-        <button type="button" data-size="500" aria-pressed="true" aria-label="500 на 500 пикселей"><span aria-hidden="true" data-pixel-label>500</span></button>
-        <button type="button" data-size="200" aria-pressed="false" aria-label="200 на 200 пикселей"><span aria-hidden="true" data-pixel-label>200</span></button>
-        <button type="button" data-size="100" aria-pressed="false" aria-label="100 на 100 пикселей"><span aria-hidden="true" data-pixel-label>100</span></button>
-        <button type="button" data-size="50" aria-pressed="false" aria-label="50 на 50 пикселей"><span aria-hidden="true" data-pixel-label>50</span></button>
-        <span class="units" aria-hidden="true" data-pixel-label>PX</span>
-      </div>
-      <div class="zoom-controls" role="group" aria-label="Масштаб просмотра">
-        <button id="zoom-out" class="icon-button" type="button" aria-label="Уменьшить масштаб" title="Уменьшить масштаб">
-          <svg width="20" height="20" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 4h8v2H1z"/></svg>
+      <div class="resolution-control" id="resolution-control">
+        <button id="resolution" class="resolution-toggle" type="button" aria-label="Разрешение 500 на 500 пикселей" aria-expanded="false" aria-controls="resolution-options">
+          <span id="resolution-value" aria-hidden="true" data-pixel-label>500 PX</span>
+          <svg width="12" height="8" viewBox="0 0 6 4" aria-hidden="true"><path d="M2 0h2v1h1v1h1v2H5V3H4V2H2v1H1v1H0V2h1V1h1z"/></svg>
         </button>
-        <button id="zoom-in" class="icon-button" type="button" aria-label="Увеличить масштаб" title="Увеличить масштаб">
-          <svg width="20" height="20" viewBox="0 0 10 10" aria-hidden="true"><path d="M4 1h2v3h3v2H6v3H4V6H1V4h3z"/></svg>
-        </button>
+        <div class="resolutions" id="resolution-options" role="group" aria-label="Разрешение кадра" hidden>
+          <button type="button" data-size="1000" aria-pressed="false" aria-label="1000 на 1000 пикселей"><span aria-hidden="true" data-pixel-label>1000 PX</span><span class="pixel-sample" aria-hidden="true"></span></button>
+          <button type="button" data-size="500" aria-pressed="true" aria-label="500 на 500 пикселей"><span aria-hidden="true" data-pixel-label>500 PX</span><span class="pixel-sample" aria-hidden="true"></span></button>
+          <button type="button" data-size="200" aria-pressed="false" aria-label="200 на 200 пикселей"><span aria-hidden="true" data-pixel-label>200 PX</span><span class="pixel-sample" aria-hidden="true"></span></button>
+          <button type="button" data-size="100" aria-pressed="false" aria-label="100 на 100 пикселей"><span aria-hidden="true" data-pixel-label>100 PX</span><span class="pixel-sample" aria-hidden="true"></span></button>
+          <button type="button" data-size="50" aria-pressed="false" aria-label="50 на 50 пикселей"><span aria-hidden="true" data-pixel-label>50 PX</span><span class="pixel-sample" aria-hidden="true"></span></button>
+        </div>
       </div>
       <div class="export-controls" role="group" aria-label="Сохранить логотип">
         <button id="download" class="icon-button download-png" type="button" aria-label="Скачать PNG" title="Скачать PNG">
