@@ -1,0 +1,11 @@
+{
+  "name": "ibenji-pixel-works",
+  "private": true,
+  "version": "1.0.0",
+  "description": "IBENJI Sound Team emblems rendered on an indexed pixel grid",
+  "scripts": {
+    "start": "node scripts/serve.cjs",
+    "check": "node --check pixel-originals.js && node --check eye-motion.js && node --check pixel-art.js && node --check motion.js && node --check pixel-export.js && node --check brand.js && node --check app.js && node --check scripts/serve.cjs && node --check scripts/build-originals.cjs && node scripts/check.cjs",
+    "originals": "node scripts/build-originals.cjs"
+  }
+}
