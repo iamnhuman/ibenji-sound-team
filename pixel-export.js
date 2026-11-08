@@ -196,21 +196,25 @@
     const fps = motion.frameRate;
     const frameCount = Math.round((end - start) * fps);
     const playback = { transition: clipIndex === undefined };
-    const cells = motion.frameAt(start, size, playback).frame.size;
-    const positions = samplePositions(cells, size);
-    const edges = new Uint16Array(cells + 1).fill(size);
-    let edge = 0;
-    for (let x = 0; x < size; x++) while (edge <= positions[x]) edges[edge++] = x;
+    const sampling = new Map();
 
-    let previous, previousPalette, pending;
+    let previous, previousPalette, previousSize, pending;
     let batchStart = performance.now();
     for (let i = 0; i < frameCount; i++) {
       const { frame } = motion.frameAt(start + i / fps, size, playback);
-      const { pixels, palette } = frame;
+      const { size: cells, pixels, palette } = frame;
+      if (!sampling.has(cells)) {
+        const positions = samplePositions(cells, size);
+        const edges = new Uint16Array(cells + 1).fill(size);
+        let edge = 0;
+        for (let x = 0; x < size; x++) while (edge <= positions[x]) edges[edge++] = x;
+        sampling.set(cells, { positions, edges });
+      }
+      const { positions, edges } = sampling.get(cells);
       const minimum = Math.max(2, Math.ceil(Math.log2(palette.length)));
       // Every scene keeps its own source colors. A new palette needs a full frame,
       // even when its index numbers happen to match the preceding image.
-      const changed = changedBounds(previousPalette === palette ? previous : undefined, pixels, cells);
+      const changed = changedBounds(previousPalette === palette && previousSize === cells ? previous : undefined, pixels, cells);
       if (changed) {
         const rect = {
           left: edges[changed.left], top: edges[changed.top],
@@ -222,6 +226,7 @@
           pending = { rect, delay: 0, data: lzw(pixels, cells, positions, rect, minimum), palette, minimum };
           previous = pixels;
           previousPalette = palette;
+          previousSize = cells;
         }
       }
       // Round cumulative time so the total length and the logo cuts stay exact.

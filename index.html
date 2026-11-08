@@ -12,6 +12,7 @@
   <script src="pixel-originals.js" defer></script>
   <script src="eye-motion.js" defer></script>
   <script src="pixel-art.js" defer></script>
+  <script src="gallery-order.js" defer></script>
   <script src="motion.js" defer></script>
   <script src="pixel-export.js" defer></script>
   <script src="brand.js" defer></script>
@@ -26,6 +27,10 @@
 
   <main class="stage" id="stage" aria-label="Анимация логотипов">
     <canvas id="artwork" width="500" height="500" role="img" aria-label="Пиксельный логотип IBENJI"></canvas>
+    <div class="gallery" id="gallery" hidden>
+      <canvas id="gallery-artwork" aria-hidden="true"></canvas>
+      <div class="gallery-grid" id="gallery-grid" role="group" aria-label="Выбрать логотип"></div>
+    </div>
     <noscript>Включи JavaScript, чтобы увидеть анимацию.</noscript>
   </main>
 
@@ -57,6 +62,24 @@
     </div>
 
     <div class="output-controls">
+      <button id="gallery-toggle" class="icon-button gallery-toggle" type="button" aria-label="Все логотипы" aria-pressed="false" aria-controls="gallery artwork" title="Все логотипы">
+        <svg class="gallery-icon" width="24" height="24" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M1 1h2v2H1zM5 1h2v2H5zM9 1h2v2H9zM1 5h2v2H1zM5 5h2v2H5zM9 5h2v2H9zM1 9h2v2H1zM5 9h2v2H5zM9 9h2v2H9z"/>
+        </svg>
+        <svg class="slideshow-icon" width="24" height="24" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M0 1h12v10H0zM1 2v8h10V2zM4 3h1v1h2v1h2v2H7v1H5v1H4z" fill-rule="evenodd"/>
+        </svg>
+      </button>
+      <button id="gallery-edit" class="gallery-edit" type="button" hidden>
+        <svg width="16" height="16" viewBox="0 0 12 12" aria-hidden="true"><path d="M8 0h2v1h1v1h1v2h-1v1h-1V4H9V3H8V2H7V1h1zM6 2h1v1h1v1h1v1h1v1H9v1H8v1H7v1H6v1H5v1H0V7h1V6h1V5h1V4h1V3h2zM2 8v2h2V9H3V8z" fill-rule="evenodd"/></svg>
+        Править
+      </button>
+      <div id="gallery-tools" class="gallery-tools" role="group" aria-label="Правка галереи" hidden>
+        <button id="gallery-remove" type="button" disabled>Удалить</button>
+        <button id="gallery-cancel" type="button">Отмена</button>
+        <button id="gallery-save" type="button" disabled>Сохранить</button>
+        <p id="gallery-status" class="gallery-status" role="status"></p>
+      </div>
       <div class="resolution-control" id="resolution-control">
         <button id="resolution" class="resolution-toggle" type="button" aria-label="Разрешение 500 на 500 пикселей" aria-expanded="false" aria-controls="resolution-options">
           <span id="resolution-value" aria-hidden="true" data-pixel-label>500 PX</span>

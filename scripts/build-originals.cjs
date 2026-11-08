@@ -30,14 +30,103 @@ function sample(raw,side,region={left:0,top:0,width:side,height:side},magnify=1)
 }
 
 function prepareSource(raw,scene) {
+  if (scene.darkPaper) {
+    const { keep = [], linework = [], paperLevel = 225, lineworkInk, cleanEdges } = scene.darkPaper;
+    const stroke = lineworkInk?.slice(1).match(/../g).map(channel => parseInt(channel, 16));
+    const width = raw.readUInt32LE(0), height = raw.readUInt32LE(4);
+    const paper = cleanEdges ? new Uint8Array(width * height) : null;
+    if (paper) for (let pixel = 0; pixel < paper.length; pixel++) {
+      const offset = 8 + pixel * 4;
+      const r = raw[offset], g = raw[offset + 1], b = raw[offset + 2];
+      const low = Math.min(r, g, b);
+      paper[pixel] = low > paperLevel && Math.max(r, g, b) - low <= 24;
+    }
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const offset = 8 + (y * width + x) * 4;
+      const r = raw[offset], g = raw[offset + 1], b = raw[offset + 2];
+      const peak = Math.max(r, g, b), low = Math.min(r, g, b), chroma = peak - low;
+      if (chroma > (paper ? 104 : 24)) continue;
+      const u = (x + .5) / width, v = (y + .5) / height;
+      if (keep.some(([cx, cy, rx, ry]) => ((u - cx) / rx) ** 2 + ((v - cy) / ry) ** 2 < 1)) continue;
+      if (chroma <= 24 && linework.some(([left, top, w, h]) => u >= left && u < left + w && v >= top && v < top + h)) {
+        if (stroke && peak < 140) raw.set(stroke, offset);
+        else raw.fill(stroke || peak > 229 ? 0 : 232 - peak, offset, offset + 3);
+      } else if (chroma <= 24 && low > paperLevel) {
+        raw.fill(0, offset, offset + 3);
+      } else if (paper && low >= 132) {
+        // Pale pixels touching the white matte are edge coverage. Keep light
+        // details enclosed by the ink, such as the eyes and the speaker cones.
+        const index = y * width + x;
+        if ([2, 5, 8].some(step => (x >= step && paper[index - step]) ||
+          (x + step < width && paper[index + step]) || paper[index - step * width] || paper[index + step * width])) {
+          raw.fill(0, offset, offset + 3);
+        }
+      }
+    }
+  }
+  if (scene.stripes) {
+    const { bottom, lean, bars } = scene.stripes;
+    const width = raw.readUInt32LE(0), height = raw.readUInt32LE(4);
+    for (let y = 0; y < Math.ceil(height * scene.text[0][1]); y++) {
+      const v = (y + .5) / height;
+      for (let x = 0; x < width; x++) {
+        const u = (x + .5) / width;
+        const across = u - (v - bottom) * lean;
+        const stripe = v < bottom && bars.some(([left, right, top]) => {
+          const tip = right + (top - bottom) * lean;
+          return across >= left && across < right && v >= top + (tip - u) * lean;
+        });
+        const index = 8 + (y * width + x) * 4;
+        raw.fill(stripe ? 255 : 0, index, index + 3);
+      }
+    }
+  }
+  if (scene.upperStretch) {
+    const { anchor, scale, end } = scene.upperStretch;
+    const stride = raw.readUInt32LE(0) * 4, height = raw.readUInt32LE(4);
+    const source = Buffer.from(raw);
+    for (let row = 0; row < Math.floor(end * height); row++) {
+      const from = Math.floor(anchor * height + (row + .5 - anchor * height) / scale);
+      source.copy(raw, 8 + row * stride, 8 + from * stride, 8 + (from + 1) * stride);
+    }
+  }
+  if (scene.bluePaper) {
+    const rgb = [1, 3, 5].map(offset => parseInt(scene.bluePaper.slice(offset, offset + 2), 16));
+    for (let offset = 8; offset < raw.length; offset += 4) {
+      const [r, g, b] = raw.subarray(offset, offset + 3);
+      if (r < 48 && g < 102 && b > r + 30 && b > g * 1.27) raw.set(rgb, offset);
+    }
+  }
+  if (scene.eraseIslands) {
+    const width = raw.readUInt32LE(0), height = raw.readUInt32LE(4);
+    const stack = [];
+    function erase(x, y) {
+      const offset = 8 + (y * width + x) * 4;
+      if (Math.min(raw[offset], raw[offset + 1], raw[offset + 2]) < 38) return;
+      raw.fill(0, offset, offset + 3);
+      stack.push(y * width + x);
+    }
+    for (const [u, v] of scene.eraseIslands) erase(Math.floor(u * width), Math.floor(v * height));
+    // The white letter islands and the adjacent swoosh belong to separate connected shapes.
+    while (stack.length) {
+      const index = stack.pop(), x = index % width, y = Math.floor(index / width);
+      if (x > 0) erase(x - 1, y);
+      if (x + 1 < width) erase(x + 1, y);
+      if (y > 0) erase(x, y - 1);
+      if (y + 1 < height) erase(x, y + 1);
+    }
+  }
   if(scene.inkRegion) {
     const width=raw.readUInt32LE(0),height=raw.readUInt32LE(4);
-    const {rect:[u,v,w,h],threshold}=scene.inkRegion;
+    const {rect:[u,v,w,h],threshold,preserveColor}=scene.inkRegion;
     const left=Math.floor(u*width),right=Math.ceil((u+w)*width);
     const top=Math.floor(v*height),bottom=Math.ceil((v+h)*height);
     for(let y=top;y<bottom;y++)for(let x=left;x<right;x++) {
       const offset=8+(y*width+x)*4;
-      const ink=Math.min(raw[offset],raw[offset+1],raw[offset+2])>=threshold?255:0;
+      const [r,g,b]=raw.subarray(offset,offset+3);
+      const low=Math.min(r,g,b);
+      if (preserveColor === 'red' ? r > 1.65 * g && r > 1.48 * b : preserveColor && Math.max(r, g, b) - low > 36) continue;
+      const ink=low>=threshold?255:0;
       raw.fill(ink,offset,offset+3);
     }
   }
@@ -56,6 +145,18 @@ function prepareSource(raw,scene) {
       for(let row=Math.floor(v*height);row<Math.ceil((v+h)*height);row++) {
         const start=8+row*width*4;
         raw.fill(0,start+left*4,start+right*4);
+      }
+    }
+  }
+  if (scene.bridges) {
+    const width = raw.readUInt32LE(0), height = raw.readUInt32LE(4);
+    for (const { from: [left, top, bottom], to: [right, endTop, endBottom], color } of scene.bridges) {
+      const rgb = [1, 3, 5].map(offset => parseInt(color.slice(offset, offset + 2), 16));
+      for (let x = Math.ceil(left * width); x < right * width; x++) {
+        const across = (x / width - left) / (right - left);
+        const first = Math.round((top + across * (endTop - top)) * height);
+        const last = Math.round((bottom + across * (endBottom - bottom)) * height);
+        for (let y = first; y < last; y++) raw.set(rgb, 8 + (y * width + x) * 4);
       }
     }
   }
@@ -109,7 +210,7 @@ function makePalette(samples,accent,limit=24,details=[]) {
     boxes.splice(index,1,box(selected.points.slice(0,split)),box(selected.points.slice(split)));
   }
   const hex=color=>'#'+color.map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
-  return [...new Set(['#000000','#ffffff',accent,...details,...boxes.map(({points,count})=>
+  return [...new Set(['#000000','#ffffff',accent,...details,...boxes.filter(({count})=>count>0).map(({points,count})=>
     hex([0,1,2].map(c=>points.reduce((sum,p)=>sum+p.color[c]*p.count,0)/count))
   )])];
 }
@@ -174,6 +275,7 @@ function captionStrokes(raw,patch,side,placement,caption,palette,compact) {
 }
 
 function buildLettering(raw,scene,palette,placement,grids) {
+  if(scene.pixelText||scene.text.length===0)return {};
   const [originX,originY,contentWidth,contentHeight]=placement;
   return Object.fromEntries([...letteringScales].filter(([grid])=>grids.includes(grid)).map(([grid,scale])=>{
     const size=grid*scale;

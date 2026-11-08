@@ -42,6 +42,7 @@ body {
   place-items: center;
   min-height: 0;
   isolation: isolate;
+  touch-action: none;
 }
 
 .stage canvas {
@@ -49,6 +50,58 @@ body {
   display: block;
   image-rendering: pixelated;
 }
+
+.stage [hidden] { display: none; }
+.stage[data-view='gallery'] { touch-action: manipulation; }
+
+.gallery { position: relative; }
+.gallery canvas, .gallery-grid { position: absolute; inset: 0; width: 100%; height: 100%; }
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--gallery-columns), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--gallery-rows), minmax(0, 1fr));
+}
+
+.gallery-tile {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #858388;
+  cursor: pointer;
+}
+
+.gallery-tile .frame-number { bottom: 2px; left: 3px; padding: 1px 2px; background: #000; }
+.gallery-tile svg { display: block; fill: currentColor; shape-rendering: crispEdges; }
+.gallery.compact .frame-number svg { width: auto; height: 5px; }
+.gallery-tile:hover, .gallery-tile:focus-visible { color: #edeae5; }
+.gallery-tile[aria-current='true'] { color: var(--tile-accent); }
+.gallery-tile:focus-visible { outline-offset: -2px; z-index: 1; }
+
+.gallery-tile::before,
+.gallery-tile::after {
+  content: '';
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border: solid currentColor;
+  visibility: hidden;
+  pointer-events: none;
+}
+.gallery-tile::before { top: 2px; left: 2px; border-width: 2px 0 0 2px; }
+.gallery-tile::after { bottom: 2px; right: 2px; border-width: 0 2px 2px 0; }
+.gallery-tile:is(:hover, [aria-current='true'])::before,
+.gallery-tile:is(:hover, [aria-current='true'])::after { visibility: visible; }
+
+.gallery[data-editing] .gallery-tile { cursor: grab; }
+.gallery[data-editing] .gallery-tile[aria-current='true']:not([aria-pressed='true']) { color: #858388; }
+.gallery[data-editing] .gallery-tile[aria-current='true']:not([aria-pressed='true'])::before,
+.gallery[data-editing] .gallery-tile[aria-current='true']:not([aria-pressed='true'])::after { visibility: hidden; }
+.gallery-tile[aria-pressed='true'] { color: #ffc570; background: rgb(255 197 112 / .11); }
+.gallery-tile.drop-target { background: rgb(237 234 229 / .13); outline: 2px dashed #edeae5; outline-offset: -2px; }
+.gallery-tile[aria-pressed='true']::before, .gallery-tile[aria-pressed='true']::after { visibility: visible; }
 
 .stage noscript {
   padding: 16px;
@@ -202,6 +255,37 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--ink, #f6f4fa); 
   gap: 8px;
 }
 
+.controls .gallery-toggle { width: var(--key-height); background: var(--panel); }
+.gallery-toggle .slideshow-icon,
+.gallery-toggle[aria-pressed='true'] .gallery-icon { display: none; }
+.gallery-toggle[aria-pressed='true'] .slideshow-icon { display: block; }
+.controls .gallery-toggle[aria-pressed='true'] { color: var(--ink); background: #2e2e32; }
+
+.controls[data-view='gallery'] { grid-template: 'output' / auto; }
+.controls[data-view='gallery'] :is(.view-controls, .transport, .resolution-control, .export-controls, .browser-save) { display: none; }
+.controls:not([data-view='gallery']) .gallery-edit { display: none; }
+
+.controls .gallery-edit, .gallery-tools { background: var(--panel); border-radius: 3px; }
+.controls .gallery-edit { display: flex; gap: 8px; padding: 0 12px; color: var(--ink); font-size: 12px; }
+.gallery-tools { display: flex; align-items: center; gap: 3px; }
+.gallery-tools[hidden] { display: none; }
+.controls .gallery-tools button { padding: 0 11px; font-size: 12px; }
+.controls #gallery-remove:not(:disabled) { color: #ff9183; }
+.controls #gallery-save:not(:disabled) { color: #18181a; background: #ffc570; }
+.gallery-status {
+  position: absolute;
+  inset: auto 0 calc(100% + 6px);
+  margin: 0;
+  padding: 4px 6px;
+  color: var(--ink);
+  background: #18181a;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: none;
+}
+.gallery-status:empty { display: none; }
+
 .resolution-control, .download-control { position: relative; }
 .resolution-control { flex: 1; }
 
@@ -301,7 +385,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--ink, #f6f4fa); 
   .wordmark canvas { width: 64px; height: 62px; }
 }
 
-@media (max-width: 620px) {
+@media (max-width: 650px) {
   .controls {
     --key-height: 44px;
     grid-template-columns: auto auto;

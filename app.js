@@ -7,6 +7,19 @@
   const stage = document.getElementById('stage');
   const canvas = document.getElementById('artwork');
   const context = canvas.getContext('2d', { alpha: false });
+  const gallery = document.getElementById('gallery');
+  const galleryArtwork = document.getElementById('gallery-artwork');
+  const galleryContext = galleryArtwork.getContext('2d', { alpha: false });
+  const galleryGrid = document.getElementById('gallery-grid');
+  const galleryToggle = document.getElementById('gallery-toggle');
+  const galleryEdit = document.getElementById('gallery-edit');
+  const galleryTools = document.getElementById('gallery-tools');
+  const galleryRemove = document.getElementById('gallery-remove');
+  const galleryCancel = document.getElementById('gallery-cancel');
+  const gallerySave = document.getElementById('gallery-save');
+  const galleryStatus = document.getElementById('gallery-status');
+  const galleryEndpoint = '/__dev/gallery';
+  const controls = galleryToggle.closest('.controls');
   const artwork = document.createElement('canvas');
   const artworkContext = artwork.getContext('2d', { alpha: false });
   const playback = document.getElementById('playback');
@@ -30,10 +43,14 @@
   const filmPrev = document.getElementById('film-prev');
   const filmNext = document.getElementById('film-next');
   const thumbnails = clips.map(createThumbnail);
+  const gallerySources = new Map(clips.map(({ scene }, index) => [scene.id, index]));
+  const gallerySample = 100;
+  const sheetColumns = 10;
   const visibleCount = Math.min(4, thumbnails.length);
   const lastWindow = thumbnails.length - visibleCount;
   const gridButtons = [...resolutionOptions.querySelectorAll('button')];
   const launch = new URLSearchParams(location.search);
+  const editReturn = history.state?.galleryEditReturn;
   const launchExport = launch.get('export');
   const exportLink = ['png', 'gif-current', 'gif-full'].includes(launchExport);
   const launchTime = launch.has('at') ? Number(launch.get('at')) : NaN;
@@ -45,15 +62,17 @@
     telegramFrame || telegramPlatform || /\bTelegram\b/i.test(navigator.userAgent));
   const initialGrid = gridButtons.find(button => exportLink && button.dataset.size === launch.get('px'))
     ?? gridButtons.find(button => button.getAttribute('aria-pressed') === 'true');
+  const initialZoom = .65;
   for (const button of gridButtons) button.setAttribute('aria-pressed', String(button === initialGrid));
   let grid = Number(initialGrid.dataset.size);
-  let playing = !exportLink;
-  let playhead = exportLink && launchTime >= 0 && launchTime < duration ? launchTime : startFromHash();
+  let playing = editReturn?.playing ?? !exportLink;
+  const launchPosition = editReturn?.at ?? (exportLink ? launchTime : NaN);
+  let playhead = Number.isFinite(launchPosition) && launchPosition >= 0 && launchPosition < duration ? launchPosition : startFromHash();
   let active = -1;
   let animationFrame = 0;
   let previousTimestamp = null;
   let lastStep = -1;
-  let zoom = .65;
+  let zoom = initialZoom;
   let fitCellSize;
   let cellSize;
   let imageData;
@@ -63,6 +82,24 @@
   let lastWheelTime = -Infinity;
   let firstVisible = 0;
   let gifClip = 0;
+  let gallerySheet;
+  let galleryColumns = 1;
+  let galleryTiles = [];
+  let galleryRevision;
+  let draft;
+  let selected = -1;
+  let dragged = -1;
+  let dropTile;
+  let saving = false;
+
+  function createFrameNumber(number) {
+    const label = document.createElement('span');
+    label.className = 'frame-number';
+    label.dataset.pixelLabel = '';
+    label.setAttribute('aria-hidden', 'true');
+    label.textContent = String(number);
+    return label;
+  }
 
   function createThumbnail({ scene, number }) {
     const button = document.createElement('button');
@@ -74,14 +111,228 @@
     thumbnail.width = 46;
     thumbnail.height = 46;
     thumbnail.setAttribute('aria-hidden', 'true');
-    const label = document.createElement('span');
-    label.className = 'frame-number';
-    label.dataset.pixelLabel = '';
-    label.setAttribute('aria-hidden', 'true');
-    label.textContent = String(number);
-    button.append(thumbnail, label);
+    button.append(thumbnail, createFrameNumber(number));
     filmstrip.append(button);
     return button;
+  }
+
+  function createGalleryTile(scene, index) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'gallery-tile';
+    button.tabIndex = -1;
+    button.dataset.scene = scene.id;
+    button.setAttribute('aria-label', `${index + 1}. ${scene.title}`);
+    button.style.setProperty('--tile-accent', scene.accent);
+    button.append(createFrameNumber(index + 1));
+    if (draft) {
+      button.draggable = true;
+      button.setAttribute('aria-pressed', 'false');
+    }
+    button.addEventListener('click', () => {
+      if (draft) {
+        if (!saving) {
+          if (selected >= 0 && selected !== index) moveDraft(selected, index);
+          else selectDraft(selected === index ? -1 : index);
+        }
+        return;
+      }
+      setGallery(false);
+      seek(index);
+      galleryToggle.focus({ preventScroll: true });
+    });
+    return button;
+  }
+
+  function refreshGallery(focusIndex = active, focus = false) {
+    const scenes = draft ?? clips.map(({ scene }) => scene);
+    galleryTiles = scenes.map(createGalleryTile);
+    galleryGrid.replaceChildren(...galleryTiles);
+    drawControlLabels(galleryGrid.querySelectorAll('[data-pixel-label]'));
+    const focused = galleryTiles[Math.max(0, Math.min(focusIndex, galleryTiles.length - 1))];
+    focused.tabIndex = 0;
+    galleryTiles.find(tile => tile.dataset.scene === clips[active]?.scene.id)?.setAttribute('aria-current', 'true');
+    if (!gallery.hidden) fitGallery();
+    if (focus) focused.focus({ preventScroll: true });
+  }
+
+  function createGallerySheet() {
+    const sheet = document.createElement('canvas');
+    sheet.width = sheetColumns * gallerySample;
+    sheet.height = Math.ceil(clips.length / sheetColumns) * gallerySample;
+    const sheetContext = sheet.getContext('2d', { alpha: false });
+    for (const [index, { scene }] of clips.entries()) {
+      const frame = render(scene.id, gallerySample);
+      sheetContext.putImageData(new ImageData(rgba(frame), frame.size, frame.size),
+        index % sheetColumns * gallerySample, Math.floor(index / sheetColumns) * gallerySample);
+    }
+    return sheet;
+  }
+
+  function fitGallery() {
+    const bounds = stage.getBoundingClientRect();
+    const density = Math.min(window.devicePixelRatio || 1, 3072 / Math.max(bounds.width, bounds.height, 1));
+    const width = Math.floor((bounds.width - 16) * density);
+    const height = Math.floor((bounds.height - 8) * density);
+    const count = galleryTiles.length;
+    let columns = 1, rows = count, tile = 1;
+    // Fit the largest square tiles possible in the stage, including the final row.
+    for (let across = 1; across <= count; across++) {
+      const down = Math.ceil(count / across);
+      const size = Math.floor(Math.min(width / across, height / down));
+      if (size < tile || (size === tile && across * down >= columns * rows)) continue;
+      columns = across;
+      rows = down;
+      tile = size;
+    }
+    const compact = tile / density < 52;
+    gallery.style.width = `${columns * tile / density}px`;
+    gallery.style.height = `${rows * tile / density}px`;
+    gallery.style.setProperty('--gallery-columns', columns);
+    gallery.style.setProperty('--gallery-rows', rows);
+    gallery.classList.toggle('compact', compact);
+
+    const side = Math.max(1, Math.floor(Math.min(tile * .89, tile - (compact ? 11 : 17) * density)));
+    const left = Math.floor((tile - side) / 2);
+    const top = Math.floor((tile - side) / 4);
+    galleryColumns = columns;
+    galleryArtwork.width = columns * tile;
+    galleryArtwork.height = rows * tile;
+    galleryContext.imageSmoothingEnabled = false;
+    gallerySheet ??= createGallerySheet();
+    for (const [index, button] of galleryTiles.entries()) {
+      const source = gallerySources.get(button.dataset.scene);
+      galleryContext.drawImage(gallerySheet,
+        source % sheetColumns * gallerySample, Math.floor(source / sheetColumns) * gallerySample, gallerySample, gallerySample,
+        index % columns * tile + left, Math.floor(index / columns) * tile + top, side, side);
+    }
+  }
+
+  function fitStage() {
+    if (gallery.hidden) fitArtwork();
+    else fitGallery();
+  }
+
+  function setGallery(open) {
+    gallery.hidden = !open;
+    canvas.hidden = open;
+    stage.dataset.view = controls.dataset.view = open ? 'gallery' : 'slideshow';
+    stage.setAttribute('aria-label', open ? 'Все логотипы' : 'Анимация логотипов');
+    galleryToggle.setAttribute('aria-pressed', String(open));
+    galleryToggle.title = open ? 'Вернуться к анимации' : 'Все логотипы';
+    if (open) {
+      playhead = paintedAt;
+      resetArtworkTouch();
+      showResolutionMenu(false);
+      showGifMenu(false);
+      for (const [index, button] of galleryTiles.entries()) {
+        button.tabIndex = index === active ? 0 : -1;
+        if (index === active) button.setAttribute('aria-current', 'true');
+        else button.removeAttribute('aria-current');
+      }
+    }
+    fitStage();
+    syncPlayback();
+  }
+
+  function syncGalleryEditor(message) {
+    galleryEdit.hidden = !galleryRevision || Boolean(draft);
+    galleryEdit.disabled = gifFull.disabled;
+    galleryToggle.hidden = Boolean(draft);
+    galleryTools.hidden = !draft;
+    if (draft) gallery.dataset.editing = '';
+    else delete gallery.dataset.editing;
+    const changed = draft && (draft.length !== clips.length || draft.some((scene, index) => scene !== clips[index].scene));
+    gallerySave.disabled = saving || !changed;
+    galleryCancel.disabled = saving;
+    galleryRemove.disabled = saving || !draft || selected < 0 || draft.length === 1;
+    if (message !== undefined) galleryStatus.textContent = message;
+  }
+
+  async function enableGalleryEditor() {
+    if (exportLink || location.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(location.hostname)) return;
+    try {
+      const response = await fetch(galleryEndpoint, { cache: 'no-store' });
+      if (!response.ok) return;
+      const { ids, revision } = await response.json();
+      if (typeof revision !== 'string' || !Array.isArray(ids) || ids.length !== clips.length ||
+          !ids.every((id, index) => id === clips[index].scene.id)) return;
+      galleryRevision = revision;
+      syncGalleryEditor();
+    } catch {
+      // Static servers and file previews do not provide the development editor.
+    }
+  }
+
+  function selectDraft(index) {
+    galleryTiles[selected]?.setAttribute('aria-pressed', 'false');
+    selected = index;
+    galleryTiles[selected]?.setAttribute('aria-pressed', 'true');
+    syncGalleryEditor(index < 0 ? 'Перетащи логотип или выбери две позиции.' : `Выбран №${index + 1}. Укажи новое место или нажми «Удалить».`);
+  }
+
+  function moveDraft(from, to) {
+    if (!draft || saving || from < 0 || to < 0 || from === to) return;
+    const [scene] = draft.splice(from, 1);
+    draft.splice(to, 0, scene);
+    selected = -1;
+    refreshGallery(to, true);
+    syncGalleryEditor(`Перемещён с №${from + 1} на №${to + 1}.`);
+  }
+
+  function removeDraft(index) {
+    if (!draft || saving || draft.length <= 1 || index < 0) return;
+    draft.splice(index, 1);
+    selected = -1;
+    refreshGallery(index, true);
+    syncGalleryEditor(`Логотип №${index + 1} убран из черновика.`);
+  }
+
+  function clearGalleryDrag() {
+    dropTile?.classList.remove('drop-target');
+    dropTile = undefined;
+    dragged = -1;
+  }
+
+  function cancelGalleryEdit() {
+    if (saving) return;
+    clearGalleryDrag();
+    selected = -1;
+    draft = undefined;
+    syncGalleryEditor('');
+    refreshGallery();
+    galleryEdit.focus({ preventScroll: true });
+  }
+
+  async function saveGalleryEdit() {
+    if (gallerySave.disabled) return;
+    saving = true;
+    syncGalleryEditor('Сохраняю порядок…');
+    try {
+      const response = await fetch(galleryEndpoint, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revision: galleryRevision, ids: draft.map(scene => scene.id) })
+      });
+      if (!response.ok) {
+        throw new Error(response.status === 409 ? 'Галерея изменилась на диске. Обнови страницу.' : 'Не удалось сохранить порядок. Попробуй ещё раз.');
+      }
+      const clip = clips[active];
+      const found = draft.indexOf(clip.scene);
+      const next = found >= 0 ? found : Math.min(active, draft.length - 1);
+      const elapsed = found >= 0 ? Math.max(0, paintedAt - clip.start) : 0;
+      const url = new URL(location.href);
+      url.hash = draft[next].id;
+      try {
+        history.replaceState({ ...history.state, galleryEditReturn: { at: next * (clip.end - clip.start) + elapsed, playing } }, '', url);
+      } catch {
+        // The saved order also loads if the browser restricts history state.
+      }
+      location.reload();
+    } catch (error) {
+      saving = false;
+      syncGalleryEditor(error instanceof TypeError ? 'Связь с локальным сервером потеряна. Попробуй ещё раз.' : error.message);
+    }
   }
 
   function showFilmstrip(start) {
@@ -182,7 +433,7 @@
     const label = playing ? 'Пауза' : 'Воспроизвести';
     playback.setAttribute('aria-label', label);
     playback.title = label;
-    if (playing && !document.hidden) animationFrame = requestAnimationFrame(tick);
+    if (playing && gallery.hidden && !document.hidden) animationFrame = requestAnimationFrame(tick);
   }
 
   function seek(index) {
@@ -264,7 +515,7 @@
   }
 
   function zoomWithWheel(event) {
-    if (event.ctrlKey || event.metaKey || !event.deltaY) return;
+    if (!gallery.hidden || event.ctrlKey || event.metaKey || !event.deltaY) return;
     event.preventDefault();
     const direction = Math.sign(event.deltaY);
     if (event.deltaMode !== 0) {
@@ -278,6 +529,88 @@
       changeZoom(-direction);
       wheelTravel = 0;
     }
+  }
+
+  function enableArtworkTouch() {
+    const pointers = new Map();
+    const tapDelay = 260;
+    const tapSlop = 12;
+    let tapStart;
+    let pendingTap;
+    let pinch;
+
+    function distance(a, b) {
+      return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    }
+
+    function clearTap() {
+      clearTimeout(pendingTap?.timer);
+      pendingTap = null;
+    }
+
+    function advanceTap() {
+      const next = pendingTap.next;
+      clearTap();
+      if (!document.hidden) seek(next);
+    }
+
+    function finishTap(event) {
+      if (pendingTap && event.timeStamp - pendingTap.point.timeStamp <= tapDelay &&
+          distance(event, pendingTap.point) <= 40) {
+        clearTap();
+        zoom = zoom > 1 ? initialZoom : 1.55;
+        fitArtwork();
+        return;
+      }
+      if (pendingTap) advanceTap();
+      pendingTap = { point: event, next: (active + 1) % clips.length, timer: setTimeout(advanceTap, tapDelay) };
+    }
+
+    function startPinch() {
+      if (pointers.size !== 2) {
+        pinch = null;
+        return;
+      }
+      const [first, second] = pointers.values();
+      pinch = { distance: Math.max(1, distance(first, second)), zoom: cellSize / fitCellSize };
+    }
+
+    stage.addEventListener('pointerdown', event => {
+      if (!gallery.hidden || event.pointerType !== 'touch') return;
+      const { left, top, right, bottom } = stage.getBoundingClientRect();
+      if (event.clientX < left || event.clientX >= right || event.clientY < top || event.clientY >= bottom) return;
+      event.target.setPointerCapture?.(event.pointerId);
+      pointers.set(event.pointerId, event);
+      tapStart = pointers.size === 1 && resolutionOptions.hidden && gifOptions.hidden ? event : null;
+      if (pointers.size > 1) clearTap();
+      startPinch();
+    });
+
+    stage.addEventListener('pointermove', event => {
+      if (!pointers.has(event.pointerId)) return;
+      pointers.set(event.pointerId, event);
+      if (tapStart && distance(tapStart, event) > tapSlop) tapStart = null;
+      if (!pinch) return;
+      const [first, second] = pointers.values();
+      const next = pinch.zoom * distance(first, second) / pinch.distance;
+      zoom = Math.max(1 / fitCellSize, Math.min(3, next));
+      if (Math.round(fitCellSize * zoom) !== cellSize) fitArtwork();
+    });
+
+    function endTouch(event) {
+      if (!pointers.delete(event.pointerId)) return;
+      if (event.type === 'pointerup' && tapStart && pointers.size === 0 &&
+          event.timeStamp - tapStart.timeStamp <= 320 && distance(tapStart, event) <= tapSlop) finishTap(event);
+      tapStart = null;
+      startPinch();
+    }
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) stage.addEventListener(type, endTouch);
+    return () => {
+      clearTap();
+      pointers.clear();
+      tapStart = null;
+      pinch = null;
+    };
   }
 
   function updateExportSize() {
@@ -364,6 +697,7 @@
     browserSave.hidden = true;
     gifFull.disabled = true;
     gifCurrent.disabled = true;
+    syncGalleryEditor();
     gif.dataset.exporting = 'true';
     exportStatus.hidden = false;
     const setProgress = progress => {
@@ -383,6 +717,7 @@
     } finally {
       gifFull.disabled = false;
       gifCurrent.disabled = false;
+      syncGalleryEditor();
       delete gif.dataset.exporting;
     }
   }
@@ -422,10 +757,86 @@
   zoomOut.addEventListener('click', () => changeZoom(-1));
   zoomIn.addEventListener('click', () => changeZoom(1));
   stage.addEventListener('wheel', zoomWithWheel, { passive: false });
+  const resetArtworkTouch = enableArtworkTouch();
+  galleryToggle.addEventListener('click', event => {
+    const open = gallery.hidden;
+    setGallery(open);
+    if (open && event.detail === 0) galleryTiles[active].focus({ preventScroll: true });
+  });
+  galleryEdit.addEventListener('click', () => {
+    if (!galleryRevision || galleryEdit.disabled || gallery.hidden) return;
+    draft = clips.map(({ scene }) => scene);
+    syncGalleryEditor('Перетащи логотип или выбери две позиции.');
+    refreshGallery(active, true);
+  });
+  galleryRemove.addEventListener('click', () => removeDraft(selected));
+  galleryCancel.addEventListener('click', cancelGalleryEdit);
+  gallerySave.addEventListener('click', saveGalleryEdit);
+  galleryGrid.addEventListener('dragstart', event => {
+    const index = galleryTiles.indexOf(event.target.closest('.gallery-tile'));
+    if (!draft || saving || index < 0) {
+      event.preventDefault();
+      return;
+    }
+    dragged = index;
+    selectDraft(index);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', draft[index].id);
+  });
+  galleryGrid.addEventListener('dragover', event => {
+    if (dragged < 0 || saving) return;
+    const tile = event.target.closest('.gallery-tile');
+    dropTile?.classList.remove('drop-target');
+    dropTile = tile;
+    if (!tile || tile === galleryTiles[dragged]) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    tile.classList.add('drop-target');
+  });
+  galleryGrid.addEventListener('drop', event => {
+    if (dragged < 0) return;
+    event.preventDefault();
+    const from = dragged;
+    const to = galleryTiles.indexOf(event.target.closest('.gallery-tile'));
+    clearGalleryDrag();
+    moveDraft(from, to);
+  });
+  galleryGrid.addEventListener('dragend', clearGalleryDrag);
+  galleryGrid.addEventListener('keydown', event => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const index = galleryTiles.indexOf(event.target);
+    if (index < 0) return;
+    if (draft && ['Backspace', 'Delete'].includes(event.key)) {
+      event.preventDefault();
+      removeDraft(index);
+      return;
+    }
+    const moves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -galleryColumns, ArrowDown: galleryColumns };
+    let next;
+    if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = galleryTiles.length - 1;
+    else if (Object.hasOwn(moves, event.key)) next = Math.max(0, Math.min(galleryTiles.length - 1, index + moves[event.key]));
+    else return;
+    event.preventDefault();
+    galleryTiles[index].tabIndex = -1;
+    galleryTiles[next].tabIndex = 0;
+    galleryTiles[next].focus({ preventScroll: true });
+  });
   filmPrev.addEventListener('click', () => stepClip(-1));
   filmNext.addEventListener('click', () => stepClip(1));
   window.addEventListener('keydown', event => {
     if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (!gallery.hidden) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (draft) cancelGalleryEdit();
+        else {
+          setGallery(false);
+          galleryToggle.focus({ preventScroll: true });
+        }
+      }
+      return;
+    }
     if (event.target?.closest?.('input, textarea, select, [contenteditable]')) return;
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
@@ -477,6 +888,9 @@
   });
   document.addEventListener('visibilitychange', syncPlayback);
   window.addEventListener('hashchange', () => {
+    if (saving) return;
+    if (draft) cancelGalleryEdit();
+    if (!gallery.hidden) setGallery(false);
     playhead = startFromHash();
     revealClip(Math.floor(playhead / (clips[0].end - clips[0].start)));
     paint();
@@ -484,12 +898,17 @@
   });
 
   drawControlLabels();
+  refreshGallery();
   showFilmstrip(0);
   browserSave.hidden = !exportLink || inTelegram;
   updateExportSize();
-  new ResizeObserver(fitArtwork).observe(stage);
-  window.addEventListener('resize', fitArtwork);
+  new ResizeObserver(fitStage).observe(stage);
+  window.addEventListener('resize', fitStage);
   paint();
-  syncPlayback();
+  if (editReturn) {
+    history.replaceState(null, '', location.href);
+    setGallery(true);
+  } else syncPlayback();
+  enableGalleryEditor();
   if (!browserSave.hidden) browserSave.focus({ preventScroll: true });
 })();
