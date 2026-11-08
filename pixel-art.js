@@ -907,37 +907,28 @@
 
   function animateConsole(scene, frame, base, phase, table) {
     const { size } = frame;
-    const red = ink => {
-      const [r, g, b] = table[ink].rgb;
-      return r > 75 && r > g * 1.6 && r > b * 1.55;
-    };
-    const deck = ink => ink !== 0 && !table[ink].neutral && !red(ink);
+    const upright = table.map(color => motifInk('red', color));
     const blue = nearest(scene, [5, 100, 224]);
     const cyan = nearest(scene, [0, 199, 184]);
     const gold = nearest(scene, [255, 220, 0]);
-    patch(scene, frame, [.212, .350, .561, .209], (ink, u, v) => {
-      if (!deck(ink)) return ink;
-      const dx = (u - .493) / .276, dy = (v - .447) / .100;
-      const theta = Math.atan2(dy, dx) - phase;
-      const r = Math.hypot(dx, dy);
-      const [x, y] = point(scene, size, .493 + Math.cos(theta) * r * .276, .447 + Math.sin(theta) * r * .100);
-      const sample = base[Math.floor(y) * size + Math.floor(x)];
-      if (deck(sample)) return sample;
-      return Math.cos(theta) < -.34 ? gold : Math.sin(theta) > .16 ? cyan : blue;
-    });
-
     const tilt = Math.sin(phase);
     const width = 1 - tilt ** 2 * .25;
-    const [cx, cy] = point(scene, size, .443, .535);
-    layer(scene, frame, base, [.426, .110, .251, .454], (x, y) => [cx + (x - cx - (cy - y) * tilt * .10) / width, y], {
-      select: red,
-      background: (x, y) => {
-        const v = (y + .5) / size;
-        if (v < .368 || v > .52) return 0;
-        const floor = base[y * size + Math.min(size - 1, x + Math.round(size * .081))];
-        return deck(floor) ? floor : 0;
-      },
-      padding: .060
+
+    patch(scene, frame, [.365, .108, .355, .456], (ink, u, v) => {
+      const sx = .443 + (u - .443 - (.535 - v) * tilt * .10) / width;
+      const front = samplePixel(scene, size, base, sx, v);
+      if (upright[front]) return front;
+      if (u > .565 && v < .377) return 0;
+      if (!upright[ink]) return ink;
+
+      // Continue the three edges of the flat S through the upright's footprint.
+      // The center stroke runs diagonally and the two ends turn back into it.
+      const across = u - .432;
+      if (v >= .444 - across * .42 && v < .503 - across * .47) return u < .488 ? gold : cyan;
+      const leftEnd = v + across * .36;
+      if (u < .481 && leftEnd >= .356 && leftEnd < .399) return leftEnd < .372 ? blue : cyan;
+      const rightEnd = u - .527;
+      return v >= .495 - rightEnd * .32 && v < .550 + rightEnd * .42 ? cyan : 0;
     });
   }
 
@@ -2396,13 +2387,70 @@
   const sealBeat = [[0, 1, 3, 4, 3, 1], [.18, 1, 2, 3, 2, 1], [.31, 3, 4, 2, 4, 3],
     [.48, 2, 1, 4, 1, 2], [.66, 1, 3, 2, 3, 1], [.84, 2, 4, 4, 4, 2],
     [1.03, 3, 2, 1, 2, 3], [1.24, 1, 3, 4, 3, 1], [1.5, 1, 3, 4, 3, 1]];
+  const sealLocks = [
+    [[.389, .510], [.415, .552], [.389, .602], [.365, .652], [.382, .712]],
+    [[.350, .514], [.351, .569], [.318, .623], [.291, .654], [.309, .703]],
+    [[.321, .500], [.288, .523], [.241, .543], [.221, .573]],
+    [[.610, .510], [.582, .553], [.606, .600], [.631, .650], [.615, .710]],
+    [[.651, .514], [.649, .569], [.682, .623], [.704, .654], [.689, .703]],
+    [[.678, .500], [.712, .523], [.758, .543], [.779, .573]]
+  ];
 
   function animateCoffeeSeal(scene, frame, base, time, table) {
     const cycle = time % 1.5;
     const meters = pose(cycle, sealBeat);
     const mint = frame.palette.indexOf('#b5ffe0');
+    const green = frame.palette.indexOf(scene.accent);
     const white = frame.palette.indexOf('#ffffff');
-    const paper = samplePixel(scene, frame.size, base, .497, .654);
+    const { size } = frame;
+    const paper = samplePixel(scene, size, base, .497, .654);
+    for (const [beat, duration] of [[.12, .50], [.69, .40]]) {
+      const age = cycle - beat;
+      if (age < 0 || age > duration + .13) continue;
+      const hit = smooth(age / .055) * smooth((.19 - age) / .11);
+      const flare = smooth((age - .055) / .098) * smooth((.30 - age) / .14);
+      if (flare > .04) for (const [u, direction] of [[.255, -1], [.745, 1]]) {
+        patch(scene, frame, [u - .075, .475, .15, .142], (ink, x, y) => {
+          const reach = 1 - ((x - u) / .071) ** 2 - ((y - .547) / .067) ** 2;
+          if (reach <= 0) return ink;
+          const amount = smooth(reach) * flare;
+          return samplePixel(scene, size, base, x - direction * amount * .016, y + amount * .026);
+        });
+      }
+      if (hit > .16) for (const [u, v] of [[.363, .493], [.635, .493]]) {
+        patch(scene, frame, [u - .026, v - .043, .052, .086], (ink, x, y) => {
+          if (table[ink].light < 125) return ink;
+          return ((x - u) / .022) ** 2 + ((y - v) / .033) ** 2 < 1 ? (hit > .55 ? green : mint) : ink;
+        });
+      }
+      for (const [index, track] of sealLocks.entries()) {
+        const front = (age - .038 - index % 3 * .039) / (duration * .72);
+        for (const [delay, reach, color] of [[.18, .033, green], [.09, .029, mint], [0, .023, mint]]) {
+          const progress = front - delay;
+          if (progress <= 0 || progress >= 1) continue;
+          const [u, v] = trackPoint(track, progress);
+          patch(scene, frame, [u - reach, v - reach, 2 * reach, 2 * reach], (ink, x, y) =>
+            table[ink].light >= 119 && (u - x) ** 2 + (v - y) ** 2 <= reach ** 2 ? color : ink);
+        }
+      }
+      const spark = Math.sin(Math.PI * smooth((age - .10) / .23));
+      if (spark > .09) for (const [u, v] of [[.138, .479], [.854, .479], [.499, .301]]) {
+        const reach = .039 + spark * .018;
+        const width = Math.max(.54 / size, .006);
+        patch(scene, frame, [u - reach, v - reach, reach * 2, reach * 2], (ink, x, y) => {
+          const dx = Math.abs(x - u), dy = Math.abs(y - v);
+          if (dx > width && dy > width || Math.max(dx, dy) > reach) return ink;
+          return Math.max(dx, dy) > .034 ? green : mint;
+        });
+      }
+    }
+    const [blink] = pose(cycle, [[0, 0], [.43, 0], [.49, 1], [.56, 0], [1.5, 0]]);
+    if (blink > .05) for (const u of [.454, .548]) {
+      patch(scene, frame, [u - .035, .476, .070, .026], (ink, x, y) => {
+        if (Math.abs(x - u) > .034) return ink;
+        return samplePixel(scene, size, base, x, y + (y - .486) * blink * 1.7);
+      });
+    }
     patch(scene, frame, [.423, .661, .15, .105], (ink, u, v) => {
       const column = Math.floor((u - .426) / .027);
       const row = Math.floor((.766 - v) / .023);
@@ -2411,11 +2459,6 @@
       const height = Math.round(meters[column]);
       return inside && row < height ? row === height - 1 ? mint : white : paper;
     });
-    const pulse = smooth((cycle - .20) / .15) * smooth((.54 - cycle) / .16) +
-      smooth((cycle - .73) / .13) * smooth((1.04 - cycle) / .16);
-    if (pulse > .3) for (const x of [.338, .602]) {
-      patch(scene, frame, [x, .447, .062, .10], ink => table[ink].light > 129 ? mint : ink);
-    }
   }
 
   const turbineKeys = [[0, 0], [.22, 0], [.33, -.009], [.46, .018], [.60, -.006], [.75, .005], [.98, 0], [1.5, 0]];
@@ -2507,6 +2550,10 @@
     [.774, .098], [.839, .093], [.831, .119], [.808, .178], [.770, .220], [.716, .251], [.661, .265], [.619, .283]];
   const citrusFlex = [[0, 0], [.17, -.028], [.34, .035], [.53, -.043], [.70, .026],
     [.88, -.012], [1.11, 0], [1.5, 0]];
+  const citrusSplash = [[.347, .187, -.12, .19, .19], [.402, .158, -.054, .23, .24],
+    [.482, .142, .016, .27, .28], [.565, .153, .086, .23, .34], [.622, .185, .074, .15, .39]];
+  const citrusFizz = [[.183, .247, -.024, .115, .24], [.736, .163, .116, .095, .45],
+    [.833, .210, .082, .130, .57], [.208, .922, -.046, .076, .66], [.804, .957, .041, .093, .81]];
 
   function animateCitrus(scene, frame, base, time, table) {
     const cycle = time % 1.5;
@@ -2525,6 +2572,35 @@
       const gleam = 1 - ((u - .452) / .16) ** 2 - ((v - .190) / .067) ** 2;
       return motifInk('warm', table[ink]) && gleam * gold > .58 ? cream : ink;
     });
+    const lime = frame.palette.indexOf(scene.accent);
+    const yellow = nearest(scene, [255, 238, 3]);
+    for (const [index, [x, y, dx, speed, delay]] of citrusSplash.entries()) {
+      const age = (cycle - delay) / .46;
+      if (age <= 0 || age >= 1) continue;
+      const u = x + dx * age, v = y - speed * age + .15 * age * age;
+      const w = Math.max(.68 / size, (.017 - age * .011) * (index % 2 ? 1 : .74));
+      patch(scene, frame, [u - w, v - 1.5 * w, 2 * w, 3 * w], (ink, px, py) => {
+        const du = px - u, dv = py - v;
+        if (ink || (du / w + dx * dv / (w * .35)) ** 2 + (dv / (w * 1.5)) ** 2 > 1) return ink;
+        return dv < -w * .32 && Math.abs(du) < w * .46 ? cream : yellow;
+      });
+    }
+    for (const [index, [x, y, drift, rise, delay]] of citrusFizz.entries()) {
+      const age = (cycle - delay) / .53;
+      if (age <= 0 || age >= 1) continue;
+      const u = x + drift * age + .009 * Math.sin(age * tau), v = y - rise * age;
+      const radius = Math.max(1 / size, .012 + .015 * age - (index % 2) * .004);
+      patch(scene, frame, [u - radius, v - radius, 2 * radius, 2 * radius], (ink, px, py) => {
+        if (ink) return ink;
+        const dx = px - u, dy = py - v, distance = Math.hypot(dx, dy);
+        if (age >= .78) {
+          const ray = Math.min(Math.abs(dx), Math.abs(dy)) < Math.max(.005, .55 / size);
+          return ray && distance > radius * (age - .48) && distance < radius ? cream : ink;
+        }
+        if (distance > radius || distance < radius - Math.max(.007, .75 / size)) return ink;
+        return dx < 0 && dy < 0 ? cream : lime;
+      });
+    }
   }
 
   const prixKeys = [[0, 0, 0], [.15, -.021, 0], [.36, .063, .92], [.47, .075, 1], [.67, .032, .65],
@@ -2533,7 +2609,7 @@
   function animateGrandPrix(scene, frame, base, time, table) {
     const cycle = time % 1.5;
     const [drive, speed] = pose(cycle, prixKeys);
-    const hot = frame.palette.indexOf('#ff774a'), steel = frame.palette.indexOf('#aec0dd');
+    const hot = frame.palette.indexOf('#ff774a');
     patch(scene, frame, [.037, .063, .954, .345], (ink, u, v) => {
       const stripe = samplePixel(scene, frame.size, base, .49 + (u - .49 - drive) / (1 + speed * .05), v);
       if (!motifInk('red', table[stripe])) return 0;
@@ -2547,72 +2623,111 @@
       const length = Math.sin(age * Math.PI) * (.094 - i * .013);
       patch(scene, frame, [tip - length, v, length, .012], ink => ink || hot);
     }
-    const flag = smooth((cycle - .37) / .37);
-    if (cycle > .37 && cycle < 1.05) patch(scene, frame, [.685, .765, .279, .165], (ink, u, v) => {
-      return table[ink].light > 112 && u - (v - .765) * .44 < .68 + flag * .30 ? steel : ink;
-    });
   }
 
+  const duoPose = [[0, 0, 0, 0, 0], [.17, -.014, .003, .008, 0], [.33, .037, -.011, -.020, .001],
+    [.49, .024, -.020, .010, -.009], [.66, -.018, .035, 0, -.023], [.83, -.010, .018, -.007, .009],
+    [1.01, .013, -.007, .015, .004], [1.20, 0, 0, 0, 0], [1.5, 0, 0, 0, 0]];
+
   function animateBackToBack(scene, frame, base, time) {
-    const [lean, lift] = pose(time % 1.5, [[0, 0, 0], [.19, .009, .002], [.40, .034, .012],
-      [.60, .025, .006], [.79, .012, -.004], [.94, .022, .004], [1.19, 0, 0], [1.5, 0, 0]]);
-    if (!lean && !lift) return;
-    patch(scene, frame, [.069, .120, .862, .460], (ink, u, v) => {
-      const fromSpine = u - .5;
-      const flex = smooth((.548 - v) / .28) * smooth(Math.abs(fromSpine) / .116);
-      return flex ? samplePixel(scene, frame.size, base,
-        u - Math.sign(fromSpine) * lean * flex, v + lift * flex) : ink;
+    const [leftNod, rightNod, leftStep, rightStep] = pose(time % 1.5, duoPose);
+    if (!leftNod && !rightNod && !leftStep && !rightStep) return;
+    patch(scene, frame, [.102, .153, .796, .423], (ink, u, v) => {
+      const side = u < .5 ? -1 : 1;
+      const away = Math.abs(u - .5);
+      // Keep the shared spine and the seat anchored as each silhouette shifts weight.
+      const shoulder = smooth((.521 - v) / .23) * smooth(away / .13);
+      const ankle = smooth((v - .35) / .16) * smooth((away - .13) / .19);
+      const nod = (side < 0 ? leftNod : rightNod) * shoulder;
+      const step = (side < 0 ? leftStep : rightStep) * ankle;
+      if (!nod && !step) return ink;
+      return samplePixel(scene, frame.size, base, u - side * (nod + step * .30), v - nod * .42 - step);
     });
   }
 
   const swooshOutline = [[.030, .634], [.055, .527], [.153, .431], [.177, .432], [.148, .492], [.132, .546],
     [.164, .582], [.237, .600], [.432, .574], [.651, .517], [.966, .460], [.981, .496],
     [.716, .569], [.467, .626], [.254, .685], [.151, .722], [.082, .718], [.039, .689]];
+  const swooshRun = [[.152, .440], [.090, .523], [.070, .613], [.127, .658], [.218, .645],
+    [.345, .612], [.487, .581], [.634, .546], [.799, .511], [.970, .476]];
+  const swooshThrust = [[0, 0], [.09, 0], [.24, .029], [.36, -.032], [.51, .012], [.63, 0],
+    [.72, .013], [.84, -.022], [1, .004], [1.13, 0], [1.5, 0]];
 
-  function animateFlight(scene, frame, time, table) {
+  function animateFlight(scene, frame, base, time, table) {
     const cycle = time % 1.5;
     const steel = frame.palette.indexOf('#abb9cc');
-    const dark = shadeMap(scene, -.39);
-    if (cycle > .10 && cycle < .68) {
-      const front = .035 + 1.07 * smooth((cycle - .13) / .52);
-      patch(scene, frame, [.026, .431, .955, .294], (ink, u, v) => {
-        if (table[ink].light < 105 || !insideOutline(swooshOutline, u, v)) return ink;
-        const along = u - .14 * (v - .58);
-        if (along > front + .031) return dark[ink];
-        return along > front - .048 ? steel : ink;
-      });
-    }
-    for (const [i, [u, v]] of [[.106, .544], [.153, .583], [.293, .685], [.507, .627]].entries()) {
-      const age = (cycle - .25 - i * .057) / .32;
-      if (age < 0 || age >= 1) continue;
-      const length = .083 * Math.sin(age * Math.PI), tip = u + .12 * age;
-      patch(scene, frame, [tip - length, v - .013, length, .033], (ink, x, y) => {
-        return !ink && Math.abs(y - v + (x - tip) * .25) < .62 / frame.size ? steel : ink;
-      });
+    const white = frame.palette.indexOf('#ffffff');
+    const { size } = frame;
+    const [thrust] = pose(cycle, swooshThrust);
+    if (thrust) patch(scene, frame, [.006, .510, .326, .238], (ink, u, v) => {
+      const bottom = .748 - smooth((u - .162) / .052) * .054;
+      const flex = smooth((.332 - u) / .224) * smooth((v - .510) / .078) * smooth((bottom - v) / .050);
+      if (!flex) return ink;
+      return samplePixel(scene, size, base, u + thrust * flex * .46, v - thrust * flex);
+    });
+    for (const [start, duration, strength] of [[.11, .52, 1], [.66, .30, .58]]) {
+      const age = (cycle - start) / duration;
+      if (age <= 0 || age >= 1.24) continue;
+      const stride = age < 1 ? age ** 1.42 : 1 + (age - 1) * 1.42;
+      for (let i = 8; i >= 0; i--) {
+        const position = stride - i * .035;
+        if (position < 0 || position >= 1) continue;
+        const [u, v] = trackPoint(swooshRun, position);
+        const reach = (.033 - i * .0025) * strength;
+        patch(scene, frame, [u - reach, v - reach, 2 * reach, 2 * reach], (ink, x, y) => {
+          if (table[ink].light < 118 || !insideOutline(swooshOutline, x, y)) return ink;
+          return Math.abs(x - u) + Math.abs(y - v) < reach ? steel : ink;
+        });
+      }
+      const wake = (age - .22) / .90;
+      if (wake <= 0 || wake >= 1) continue;
+      for (const [lane, offset] of [[0, .024], [1, -.045], [2, .061]]) {
+        const progress = wake - lane * .076;
+        if (progress <= 0 || progress >= .91) continue;
+        const [u, v] = trackPoint(swooshRun, .19 + progress * .80);
+        const length = (.13 - lane * .028) * Math.sin(progress * Math.PI) * strength;
+        const y0 = v + offset, thickness = Math.max(.54 / size, .007 - lane * .0012);
+        patch(scene, frame, [u - length, y0 - thickness, length, length * .25 + thickness * 2], (ink, x, y) => {
+          if (ink || Math.abs(y - y0 + (x - u) * .25) > thickness) return ink;
+          return x > u - length * .22 ? white : steel;
+        });
+      }
     }
   }
 
-  const playerPress = [[0, 0], [.18, 0], [.31, .95], [.46, .45], [.59, -.10], [.77, 0], [1.5, 0]];
+  const playerPress = [[0, 0], [.13, 0], [.23, .17], [.32, 1], [.40, .88], [.52, -.08], [.64, 0],
+    [1.88, 0], [1.99, .86], [2.07, .66], [2.20, -.06], [2.33, 0], [3, 0]];
 
   function animatePlayBadge(scene, frame, base, time) {
-    const cycle = time % 1.5;
-    const [press] = pose(cycle, playerPress);
-    const playing = cycle > .37 && cycle < 1.23;
-    const white = frame.palette.indexOf('#ffffff');
-    const sheen = frame.palette.indexOf('#ff705e');
-    const dark = frame.palette.indexOf('#760515');
-    const bars = [0, 1, 2, 3, 4].map(i => .031 + .037 * Math.abs(Math.sin(cycle * 20 + i * .96)));
-    patch(scene, frame, [.211, .141, .578, .324], (_ink, u, v) => {
-      const sx = .5 + (u - .5) / (1 - press * .11);
-      const sy = .301 + (v - .301 - press * .018) / (1 - press * .16);
-      const color = sy < .465 ? samplePixel(scene, frame.size, base, sx, sy) : 0;
-      if (!playing || !color) return color;
-      if (sx > .355 && sx < .645 && sy > .222 && sy < .373) {
-        const position = (sx - .370) / .055;
-        const bar = Math.floor(position);
-        return bar >= 0 && bar < bars.length && position - bar < .68 && Math.abs(sy - .294) < bars[bar] ? white : dark;
+    const [press] = pose(time, playerPress);
+    const start = .35, stop = 1.99;
+    const gate = smooth((time - start) / .15) * smooth((stop + .12 - time) / .12);
+    if (!press && !gate) return;
+    const { size, palette } = frame;
+    const white = palette.indexOf('#ffffff'), sheen = palette.indexOf('#ff705e');
+    const dark = palette.indexOf('#760515'), red = palette.indexOf(scene.accent);
+    const screen = palette.indexOf('#af0920'), steel = palette.indexOf('#8d99a9');
+    const progress = Math.max(0, Math.min(1, (time - start) / (stop - start)));
+    const bright = press > .68;
+    patch(scene, frame, [.226, .147, .548, .302], (ink, u, v) => {
+      if (!ink) return 0;
+      const sx = .5 + (u - .5) / (1 - press * .055);
+      const sy = .301 + (v - .301 - press * .025) / (1 - press * .091);
+      const face = samplePixel(scene, size, base, sx, sy);
+      const color = face || dark;
+      if (bright && color === sheen) return red;
+      if (!gate || !color || sx < .333 || sx >= .674 || sy < .216 || sy >= .379) return color;
+
+      // A short pixel wipe changes the play glyph into the pause mark.
+      if (sx < .418 + gate * .207 && sx >= .418 && sy >= .224 && sy < .359) {
+        const bar = Math.min(Math.abs(sx - .470), Math.abs(sx - .535)) < .018;
+        if (bar && sy >= .236 && sy < .337) return sy < .326 ? white : steel;
+        if (color === white) return screen;
       }
-      if (sy > .389 && sy < .410 && sx > .281 && sx < .281 + .439 * (cycle - .37) / .86) return sheen;
+      if (gate > .34 && sy >= .362 && sy < .379 && sx >= .346 && sx < .656) {
+        const slot = (sx - .346) / .031;
+        if (slot % 1 < .79) return Math.floor(slot) < progress * 10 ? sheen : dark;
+      }
       return color;
     });
   }
@@ -2678,27 +2793,49 @@
     }
   }
 
+  const arcadeBands = [.158, .231, .308, .383, .448, .510];
+
   function animateArcade(scene, frame, time, table) {
     const cycle = time % 1.5;
-    const salmon = frame.palette.indexOf('#ff8b64');
-    const white = frame.palette.indexOf('#ffffff');
-    const off = shadeMap(scene, -.47);
-    const pale = nearest(scene, [156, 165, 174]);
-    patch(scene, frame, [.159, .158, .674, .419], (ink, u, v) => {
-      const frontier = .57 - cycle * .34;
-      const band = Math.abs(v - frontier);
-      if (motifInk('red', table[ink])) {
-        if (band < .018) return salmon;
-        if (v < frontier && Math.floor(v * 29 - cycle * 9) % 3 === 0) return off[ink];
-      }
-      if (table[ink].light > 165 && band < .055) return band < .013 ? white : pale;
-      return ink;
+    const hot = frame.palette.indexOf('#ff8b64');
+    const red = frame.palette.indexOf(scene.accent), dim = frame.palette.indexOf('#980104');
+    patch(scene, frame, [.155, .10, .689, .408], (ink, u, v) => {
+      if (!motifInk('red', table[ink])) return ink;
+      const band = arcadeBands.findIndex(end => v < end);
+      const age = cycle - .09 - (arcadeBands.length - 1 - band) * .122;
+      if (band < 0 || age <= 0 || age > .64) return ink;
+      const reach = .38 * smooth(age / .32), distance = Math.abs(u - .498);
+      if (age < .32 && distance > reach) return dim;
+      if (reach - distance < .052 && age < .44) return hot;
+      return age < .49 ? red : ink;
     });
-    if (cycle < .36 || cycle > 1.08) return;
-    const light = (cycle - .36) / .72;
-    const [x, y] = point(scene, frame.size, .498, .167 - Math.sin(light * Math.PI) * .069);
-    square(frame, x, y, Math.max(1, Math.round(frame.size * .016)), white);
-    for (const side of [-1, 1]) square(frame, x + side * frame.size * .017, y, 1, salmon);
+  }
+
+  const foxGlobeTurn = [[0, 0], [.14, -.06], [.71, .38], [1.17, .49], [1.53, .33],
+    [2.12, -.38], [2.38, -.31], [2.67, 0], [3, 0]];
+
+  function animateFoxGlobe(scene, frame, base, time, table) {
+    const [turn] = pose(time, foxGlobeTurn);
+    if (!turn) return;
+    const { size, palette } = frame;
+    const cool = table.map(color => motifInk('cool', color));
+    const sea = palette.indexOf('#002eb4');
+    const [cx, cy, rx, ry] = [.537, .265, .194, .197];
+    const cos = Math.cos(turn), sin = Math.sin(turn);
+    const edge = Math.max(1, Math.round(size * .009)) / size;
+    patch(scene, frame, [.339, .067, .407, .398], (ink, u, v) => {
+      if (!cool[ink]) return ink;
+      const x = (u - cx) / rx, y = (v - cy) / ry;
+      const depth = Math.sqrt(Math.max(0, 1 - x * x - y * y));
+      if (Math.abs(Math.atan2(x, depth) + turn) > Math.PI / 2) return sea;
+      const sx = cx + rx * (x * cos + depth * sin);
+      const color = samplePixel(scene, size, base, sx, v);
+      if (cool[color]) return color;
+
+      // Bridge a single raster step where the fox covers the source map.
+      const adjacent = samplePixel(scene, size, base, sx + (sx < cx ? edge : -edge), v);
+      return cool[adjacent] ? adjacent : sea;
+    });
   }
 
   const jawKeys = [[0, 0, 0], [.16, -.021, 0], [.33, .029, -.017], [.49, .058, .013], [.66, -.025, .015],
@@ -2734,49 +2871,118 @@
     [.88, .16, .35], [1.05, -.102, .55], [1.22, .04, .11], [1.40, 0, 0], [1.5, 0, 0]];
   const ritualHead = [[.343, .482], [.392, .487], [.435, .509], [.511, .512], [.568, .508], [.593, .490],
     [.631, .477], [.659, .477], [.660, .601], [.678, .653], [.687, .716], [.674, .763], [.632, .807],
-    [.559, .833], [.552, .944], [.463, .944], [.459, .834], [.399, .824], [.347, .793], [.307, .738],
+    [.559, .830], [.459, .834], [.399, .824], [.347, .793], [.307, .738],
     [.307, .679], [.343, .599]];
-  const ritualEyes = [[.437, .581, .207, .656], [.578, .581, .785, .653]];
+  const ritualEyes = [[.437, .589], [.581, .587]];
+  const ritualAim = [[0, 0, 0], [.16, -.25, -.08], [.35, .22, -.29], [.50, .18, .09],
+    [.67, -.27, .25], [.79, -.28, .14], [.95, .16, -.24], [1.11, .24, -.12], [1.38, 0, 0], [1.5, 0, 0]];
+  const ritualStrands = [[.490, .803, .088, .25], [.538, .806, .119, .55]];
+  const ritualBeams = [
+    [[.085, .690, .002], [.162, .669, .003], [.223, .654, .005], [.282, .641, .006],
+      [.333, .619, .006], [.377, .606, .008], [.412, .593, .013], [.437, .589, .015]],
+    [[.581, .587, .016], [.617, .600, .010], [.669, .615, .009], [.718, .635, .009],
+      [.764, .645, .008], [.804, .653, .005], [.846, .662, .004], [.879, .672, .002]]
+  ];
+  const ritualBackdrops = new Map();
+
+  function beamAt(track, u) {
+    if (u < track[0][0] || u > track.at(-1)[0]) return null;
+    const end = track.findIndex(([x], index) => index && x >= u);
+    const [x, y, w] = track[end - 1], [nextX, nextY, nextW] = track[end];
+    const progress = (u - x) / (nextX - x);
+    return [y + (nextY - y) * progress, w + (nextW - w) * progress];
+  }
 
   function animateRitualCat(scene, frame, base, time, table) {
-    const [swing, laser] = pose(time % 1.5, ritualKeys);
-    if (!swing && !laser) return;
+    const cycle = time % 1.5;
+    if (cycle < .001 || cycle >= 1.40) return;
+    const [swing, laser] = pose(cycle, ritualKeys);
+    const aims = pose(cycle, ritualAim);
     const gold = frame.palette.indexOf('#fff400'), ember = frame.palette.indexOf('#ff991c');
     const { size } = frame;
     const outline = ritualHead.map(([u, v]) => point(scene, size, u, v));
     const cx = .504, cy = .714;
     const cos = Math.cos(swing), sin = Math.sin(swing);
-    const beamRect = [.194, .522, .605, .150];
-    const beamWidth = Math.max(.009, .62 / size);
-    const eyeArea = (u, v) => ritualEyes.some(([x, y]) => ((u - x) / .055) ** 2 + ((v - y) / .037) ** 2 < 1);
-    patch(scene, frame, beamRect, (ink, u, v) => {
-      if (!motifInk('red', table[ink]) || eyeArea(u, v)) return ink;
-      for (const [eyeX, eyeY, endX, endY] of ritualEyes) {
-        const along = (u - endX) / (eyeX - endX);
-        if (along > 0 && along < 1 && Math.abs(v - endY - along * (eyeY - endY)) < beamWidth * (1.15 + along)) return 0;
-      }
-      return ink;
-    });
-    rotate(scene, frame, base, [.304, .469, .385, .480], [cx, cy], swing, {
+    const drop = .026 * Math.abs(swing) / .23;
+    const [pivotX, pivotY] = point(scene, size, cx, cy);
+    const red = frame.palette.indexOf(scene.accent);
+    const white = frame.palette.indexOf('#ffffff'), pale = nearest(scene, [193, 177, 179]);
+    const moved = (u, v) => [cx + (u - cx) * cos - (v - cy) * sin, cy + (u - cx) * sin + (v - cy) * cos + drop];
+    const eyeArea = (u, v) => ritualEyes.some(([x, y]) => ((u - x) / .024) ** 2 + ((v - y) / .019) ** 2 < 1);
+    const isRed = ink => motifInk('red', table[ink]);
+    if (!ritualBackdrops.has(size)) {
+      const clean = { ...frame, pixels: base.slice() };
+      patch(scene, clean, [.080, .555, .805, .145], (ink, u, v) => {
+        if (!isRed(ink) || eyeArea(u, v)) return ink;
+        const left = u < .5;
+        const beam = beamAt(ritualBeams[left ? 0 : 1], u);
+        if (!beam) return ink;
+        const [y, radius] = beam, edge = radius + .004;
+        if (Math.abs(v - y) > edge) return ink;
+        // The original rays cross the tips of the pentagram behind the cat.
+        const star = left ? u > .213 && u < .246 && v > .661 + (u - .218) * .58
+          : u > .723 && u < .773 && v > .649 + (.767 - u) * .73;
+        if (star) return ink;
+        const background = samplePixel(scene, size, base, u, y + (v < y ? -1 : 1) * (edge + 1 / size));
+        return isRed(background) ? 0 : background;
+      });
+      patch(scene, clean, [.465, .816, .091, .124], (ink, u, v) => {
+        const strand = ritualStrands.some(([x, y, length]) => Math.abs(u - x) <= .014 && v < y + length + .009);
+        if (!strand || isRed(ink)) return ink;
+        const [r, g, b] = table[ink].rgb;
+        return Math.max(r, g, b) - Math.min(r, g, b) < 51 ? 0 : ink;
+      });
+      ritualBackdrops.set(size, clean.pixels);
+    }
+    const clean = ritualBackdrops.get(size);
+    frame.pixels.set(clean);
+    layer(scene, frame, clean, [.304, .469, .385, .367], (x, y) => {
+      const dx = x - pivotX, dy = y - pivotY - drop * size;
+      return [pivotX + dx * cos + dy * sin, pivotY - dx * sin + dy * cos];
+    }, {
       select: (ink, x, y) => {
         const u = (x + .5) / size, v = (y + .5) / size;
         if (!insideOutline(outline, x + .5, y + .5)) return false;
         if (!ink) return Math.abs(u - .506) < .059 && v > .644 && v < .785;
-        return !motifInk('red', table[ink]) || eyeArea(u, v);
+        const face = u > .356 && u < .658 && v > .519 && v < .818;
+        return face || !isRed(ink);
       },
       padding: .064
     });
-    const red = frame.palette.indexOf(scene.accent);
-    for (const [eyeX, eyeY, endX, endY] of ritualEyes) {
-      const x = cx + (eyeX - cx) * cos - (eyeY - cy) * sin;
-      const y = cy + (eyeX - cx) * sin + (eyeY - cy) * cos;
-      patch(scene, frame, beamRect, (ink, u, v) => {
-        const along = (u - endX) / (x - endX);
-        if (along < 0 || along >= 1 || Math.abs(v - endY - along * (y - endY)) > beamWidth * (.38 + along * .52)) return ink;
-        return laser > .68 && along > .40 ? ember : red;
+    for (const [index, [rootX, rootY, restingLength, delay]] of ritualStrands.entries()) {
+      const [x, y] = moved(rootX, rootY);
+      const age = cycle - delay;
+      const stretch = smooth(age / .29) * smooth((.46 - age) / .12);
+      const length = Math.min(.976 - y, restingLength * (.69 + stretch * .40));
+      const drift = (index ? -.011 : .012) + swing * .050;
+      patch(scene, frame, [x - .038, y - .006, .076, length + .018], (ink, u, v) => {
+        const depth = (v - y) / length;
+        if (depth < -.07 || depth > 1) return ink;
+        const axis = x + drift * depth ** 2;
+        const width = Math.max(.56 / size, .009 - .005 * depth);
+        return Math.abs(u - axis) < width ? (Math.abs(u - axis) < width * .62 || width <= .60 / size ? white : pale) : ink;
       });
+      const falling = (age - .33) / .23;
+      if (falling > 0 && falling < 1) {
+        const [px, py] = point(scene, size, x + drift, y + length + .011 + .058 * falling ** 2);
+        if (py < size * .972) square(frame, px, py, Math.max(1, Math.round(size * (.017 - falling * .010))), pale);
+      }
+    }
+    for (const [index, [eyeX, eyeY]] of ritualEyes.entries()) {
+      const [u, v] = moved(eyeX, eyeY);
+      const beamCos = Math.cos(aims[index]), beamSin = Math.sin(aims[index]);
+      const track = ritualBeams[index];
+      patch(scene, frame, [index ? u - .024 : .032, .492, index ? .955 - u : u + .007, .340], (ink, px, py) => {
+        const dx = px - u, dy = py - v;
+        const x = eyeX + dx * beamCos + dy * beamSin, y = eyeY - dx * beamSin + dy * beamCos;
+        const beam = beamAt(track, x);
+        if (!beam) return ink;
+        const [axis, radius] = beam, distance = Math.abs(y - axis);
+        if (distance > Math.max(.65 / size, radius * (1 + laser * .26))) return ink;
+        return laser > .42 && distance < Math.max(.34 / size, radius * .46) ? ember : red;
+      });
+      const [px, py] = point(scene, size, u, v);
       if (laser > .32) {
-        const [px, py] = point(scene, size, x, y);
         const diameter = Math.max(1, Math.round(size * .017 * laser));
         square(frame, px, py, diameter + 1, ember);
         square(frame, px, py, diameter, gold);
@@ -2784,29 +2990,38 @@
     }
   }
 
-  const screamKeys = [[0, 0, 0], [.19, -.48, .06], [.36, 1, 1], [.48, .86, .47], [.65, .06, 0],
-    [.80, -.27, .09], [.97, .74, .85], [1.08, .32, .30], [1.29, 0, 0], [1.5, 0, 0]];
+  const screamKeys = [[0, 0, 0, 0], [.18, -.38, -.18, 0], [.34, -.83, -.47, .05],
+    [.46, .81, -.15, .73], [.54, 1, .60, 1], [.66, .74, 1, .61], [.79, .46, .62, .24],
+    [.98, -.28, -.15, 0], [1.21, .04, -.05, 0], [1.51, -.64, -.32, .05],
+    [1.68, .93, .20, 1], [1.81, 1, .91, .61], [1.96, .73, .81, .29],
+    [2.16, .31, .22, .13], [2.39, -.22, -.10, 0], [2.61, 0, 0, 0], [3, 0, 0, 0]];
 
   function animatePaperScream(scene, frame, base, time, table) {
-    const cycle = time % 1.5;
-    const [shout, beat] = pose(cycle, screamKeys);
-    if (!shout && !beat) return;
+    const [jaw, tongue, beat] = pose(time, screamKeys);
+    if (!jaw && !tongue && !beat) return;
     const { size } = frame;
-    patch(scene, frame, [.294, .470, .420, .304], (ink, u, v) => {
-      const reach = smooth((1 - ((u - .505) / .210) ** 2 - ((v - .623) / .151) ** 2) / .57);
-      if (!reach) return ink;
-      const sx = .505 + (u - .505) / (1 + shout * .22 * reach);
-      const sy = .602 + (v - .602) / (1 + shout * .34 * reach) - shout * .026 * reach;
-      return samplePixel(scene, size, base, sx, sy);
+    const collar = Math.floor(scene.text[1][1] * size) / size;
+    patch(scene, frame, [.300, .573, .407, collar - .573], (ink, u, v) => {
+      const cheek = (u - .509) / .206;
+      const hinge = .588 + .042 * cheek ** 2 - .016 * cheek;
+      if (v <= hinge || v >= collar || Math.abs(cheek) >= 1) return ink;
+      const lip = .705 - .040 * cheek;
+      const chin = .744 - .017 * cheek;
+      const drop = jaw * Math.min(.033, (collar - chin) * .82) * smooth((1 - Math.abs(cheek)) / .58);
+      const lowerLip = lip + drop, lowerChin = chin + drop;
+      // The lower lip and teeth travel together between the upper teeth and the caption.
+      let sy = v - drop;
+      if (v < lowerLip) sy = hinge + (v - hinge) * (lip - hinge) / (lowerLip - hinge);
+      else if (v > lowerChin) sy = collar - (collar - v) * (collar - chin) / (collar - lowerChin);
+
+      const tongueAxis = .620 + (u - .449) * .65;
+      const flex = smooth((u - .448) / .150) * smooth((.687 - u) / .055) *
+        smooth((.065 - Math.abs(sy - tongueAxis)) / .047);
+      return samplePixel(scene, size, base, u - tongue * flex * .014, sy - tongue * flex * .019);
     });
     const glow = frame.palette.indexOf('#d8ff78');
-    for (const [u, v, rx, ry] of [[.142, .555, .061, .074], [.851, .543, .063, .078]]) {
-      patch(scene, frame, [u - rx, v - ry, rx * 2, ry * 2], (_ink, x, y) => {
-        const reach = smooth((1 - ((x - u) / rx) ** 2 - ((y - v) / ry) ** 2) / .48);
-        const scale = 1 + beat * .23 * reach;
-        const color = samplePixel(scene, size, base, u + (x - u) / scale, v + (y - v) / scale);
-        return beat > .51 && reach > .35 && motifInk('green', table[color]) ? glow : color;
-      });
+    if (beat > .52) for (const rect of [[.093, .507, .088, .104], [.809, .493, .087, .108]]) {
+      patch(scene, frame, rect, ink => motifInk('green', table[ink]) ? glow : ink);
     }
     if (beat > .16) for (const rect of [[.008, .248, .201, .397], [.793, .242, .199, .398]]) {
       const hot = frame.palette.indexOf('#ffb22e');
@@ -3137,7 +3352,7 @@
         animateBackToBack(scene, frame, base, t);
         break;
       case 'swoosh-launch':
-        animateFlight(scene, frame, t, table);
+        animateFlight(scene, frame, base, t, table);
         break;
       case 'play-press':
         animatePlayBadge(scene, frame, base, t);
@@ -3156,6 +3371,9 @@
         break;
       case 'arcade-scan':
         animateArcade(scene, frame, t, table);
+        break;
+      case 'fox-globe':
+        animateFoxGlobe(scene, frame, base, t, table);
         break;
       case 'headphone-shock':
         animateHeadphones(scene, frame, base, t);

@@ -107,7 +107,7 @@ function prepareSource(raw,scene) {
       stack.push(y * width + x);
     }
     for (const [u, v] of scene.eraseIslands) erase(Math.floor(u * width), Math.floor(v * height));
-    // The white letter islands and the adjacent swoosh belong to separate connected shapes.
+    // Only erase the light shapes connected to the specified seeds.
     while (stack.length) {
       const index = stack.pop(), x = index % width, y = Math.floor(index / width);
       if (x > 0) erase(x - 1, y);
@@ -118,12 +118,25 @@ function prepareSource(raw,scene) {
   }
   if(scene.inkRegion) {
     const width=raw.readUInt32LE(0),height=raw.readUInt32LE(4);
-    const {rect:[u,v,w,h],threshold,preserveColor}=scene.inkRegion;
+    const {rect:[u,v,w,h],threshold,preserveColor,redInk,whiteThreshold}=scene.inkRegion;
+    const stroke=redInk?.slice(1).match(/../g).map(channel=>parseInt(channel,16));
     const left=Math.floor(u*width),right=Math.ceil((u+w)*width);
     const top=Math.floor(v*height),bottom=Math.ceil((v+h)*height);
     for(let y=top;y<bottom;y++)for(let x=left;x<right;x++) {
       const offset=8+(y*width+x)*4;
       const [r,g,b]=raw.subarray(offset,offset+3);
+      if (stroke) {
+        const coverage = r - Math.max(g, b);
+        if (whiteThreshold !== undefined) {
+          if (coverage >= threshold) raw.set(stroke, offset);
+          else raw.fill(Math.min(r, g, b) >= whiteThreshold ? 255 : 0, offset, offset + 3);
+          continue;
+        }
+        if (coverage < 14 || Math.abs(g - b) > 42) continue;
+        if (coverage >= threshold) raw.set(stroke, offset);
+        else raw.fill(0, offset, offset + 3);
+        continue;
+      }
       const low=Math.min(r,g,b);
       if (preserveColor === 'red' ? r > 1.65 * g && r > 1.48 * b : preserveColor && Math.max(r, g, b) - low > 36) continue;
       const ink=low>=threshold?255:0;

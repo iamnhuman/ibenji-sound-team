@@ -55,7 +55,6 @@
     "ikea-instructions",
     "three-stripes",
     "triple-diamond",
-    "mountain-break",
     "streaming-n",
     "orbit",
     "soda-globe",
@@ -72,7 +71,6 @@
     "ritual-cat",
     "toxic-feet",
     "pixel-hand",
-    "dripping-ink",
     "trail-arches",
     "star-chevron",
     "twin-discs",
@@ -84,15 +82,21 @@
     "coffee-seal",
     "red-turbine",
     "tire-mascot",
-    "chrome-ellipses",
-    "grand-prix"
+    "grand-prix",
+    "neural-drink",
+    "xbox-orb",
+    "chip-mascot",
+    "mushroom-emblem",
+    "chrome-ellipses"
   ],
   "removed": [
     "reactor-spine",
     "chaotic-cat",
+    "mountain-break",
     "red-tab",
     "race-stripes",
     "retro-distortion",
+    "dripping-ink",
     "bowtie-rabbit",
     "mountain-arches"
   ]
